@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import WorkoutLogger from '@/components/workout-logger';
+import { useRepzyColors } from '@/constants/repzy-colors';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 
 export default function HomeScreen() {
+  const c = useRepzyColors();
   const { session } = useAuth();
   const [username, setUsername] = useState<string | null>(null);
+  const [logging, setLogging] = useState(false);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -22,28 +25,57 @@ export default function HomeScreen() {
   }, [session]);
 
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedText type="title">Repzy</ThemedText>
-        <ThemedText>Logged in as @{username ?? '...'}</ThemedText>
+    <SafeAreaView style={[styles.container, { backgroundColor: c.background }]}>
+      <View style={styles.top}>
+        <Text style={[styles.logo, { color: c.accent }]}>Repzy</Text>
+        <Text style={{ color: c.subtext }}>@{username ?? '...'}</Text>
+      </View>
 
-        <Pressable onPress={() => supabase.auth.signOut()} style={styles.button}>
-          <Text style={styles.buttonText}>Log out</Text>
+      <View style={styles.middle}>
+        {savedMessage && (
+          <View style={[styles.savedBox, { backgroundColor: c.successSoft }]}>
+            <Text style={{ color: c.success, fontWeight: '700', textAlign: 'center' }}>{savedMessage}</Text>
+          </View>
+        )}
+
+        <Pressable
+          onPress={() => {
+            setSavedMessage(null);
+            setLogging(true);
+          }}
+          style={({ pressed }) => [styles.startButton, { backgroundColor: c.accent, opacity: pressed ? 0.8 : 1 }]}>
+          <Text style={styles.startText}>Start workout</Text>
         </Pressable>
-      </SafeAreaView>
-    </ThemedView>
+      </View>
+
+      <Pressable onPress={() => supabase.auth.signOut()} style={styles.logout}>
+        <Text style={{ color: c.subtext }}>Log out</Text>
+      </Pressable>
+
+      {logging && (
+        <WorkoutLogger
+          onClose={() => setLogging(false)}
+          onSaved={({ prCount, title }) => {
+            setLogging(false);
+            setSavedMessage(
+              prCount > 0
+                ? `"${title}" saved with ${prCount} new PR${prCount === 1 ? '' : 's'} 🏆`
+                : `"${title}" saved 💪`,
+            );
+          }}
+        />
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center' },
-  safeArea: { alignItems: 'center', gap: 16 },
-  button: {
-    backgroundColor: '#FF5A1F',
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginTop: 12,
-  },
-  buttonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+  container: { flex: 1, paddingHorizontal: 24 },
+  top: { alignItems: 'center', marginTop: 32, gap: 4 },
+  logo: { fontSize: 40, fontWeight: '800', letterSpacing: -1 },
+  middle: { flex: 1, justifyContent: 'center', gap: 16 },
+  savedBox: { borderRadius: 12, padding: 14 },
+  startButton: { borderRadius: 16, paddingVertical: 20, alignItems: 'center' },
+  startText: { color: '#FFFFFF', fontSize: 20, fontWeight: '800' },
+  logout: { alignItems: 'center', paddingVertical: 20 },
 });
