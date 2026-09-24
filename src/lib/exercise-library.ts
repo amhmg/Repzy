@@ -6,7 +6,13 @@ export type LibraryExercise = {
   muscle: string;
   group: string;
   equipment: string;
-  image: string | null;
+  primary: string[];
+  secondary: string[];
+  primaryNames: string[];
+  secondaryNames: string[];
+  level: string;
+  mechanic: string;
+  instructions: string[];
   popular: boolean;
 };
 
@@ -14,10 +20,10 @@ export const EXERCISE_LIBRARY = data as LibraryExercise[];
 
 export const MUSCLE_GROUPS = ['All', 'Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Core'];
 
-const IMAGE_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/';
+const BY_NAME = new Map(EXERCISE_LIBRARY.map((e) => [e.name.toLowerCase(), e]));
 
-export function exerciseImageUrl(image: string | null) {
-  return image ? IMAGE_BASE + image : null;
+export function findLibraryExercise(name: string): LibraryExercise | null {
+  return BY_NAME.get(name.trim().toLowerCase()) ?? null;
 }
 
 // Every word you type must appear in the name, muscle or equipment.

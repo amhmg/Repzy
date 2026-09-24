@@ -1,17 +1,20 @@
-import { Image } from 'expo-image';
 import { useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import MuscleMap from '@/components/muscle-map';
 import { useRepzyColors } from '@/constants/repzy-colors';
-import { EXERCISE_LIBRARY, exerciseImageUrl, MUSCLE_GROUPS, searchExercises } from '@/lib/exercise-library';
+import { EXERCISE_LIBRARY, MUSCLE_GROUPS, searchExercises } from '@/lib/exercise-library';
+
+type Picked = { name: string; primary: string[]; secondary: string[] };
 
 type Props = {
   addedNames: string[];
-  onPick: (exercise: { name: string; image: string | null }) => void;
+  onPick: (exercise: Picked) => void;
+  onInfo: (name: string) => void;
   onCancel: () => void;
 };
 
-export default function ExercisePicker({ addedNames, onPick, onCancel }: Props) {
+export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }: Props) {
   const c = useRepzyColors();
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('All');
@@ -29,7 +32,7 @@ export default function ExercisePicker({ addedNames, onPick, onCancel }: Props) 
       `Add "${trimmed}" as your own exercise? Use the same name every time so your PRs and history match up.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Create', onPress: () => onPick({ name: trimmed, image: null }) },
+        { text: 'Create', onPress: () => onPick({ name: trimmed, primary: [], secondary: [] }) },
       ],
     );
   }
@@ -80,35 +83,40 @@ export default function ExercisePicker({ addedNames, onPick, onCancel }: Props) 
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
-        initialNumToRender={12}
-        windowSize={7}
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        removeClippedSubviews
         contentContainerStyle={styles.list}
         renderItem={({ item }) => {
           const isAdded = added.has(item.name.toLowerCase());
-          const uri = exerciseImageUrl(item.image);
           return (
-            <Pressable
-              onPress={() => onPick({ name: item.name, image: item.image })}
-              disabled={isAdded}
-              style={({ pressed }) => [styles.row, { opacity: isAdded ? 0.45 : pressed ? 0.6 : 1 }]}>
-              <View style={[styles.thumb, { backgroundColor: c.inputBg }]}>
-                {uri ? (
-                  <Image source={{ uri }} style={styles.thumb} contentFit="cover" transition={150} cachePolicy="memory-disk" />
-                ) : (
-                  <Text style={styles.thumbFallback}>🏋️</Text>
-                )}
-              </View>
-              <View style={styles.flex}>
-                <Text style={[styles.name, { color: c.text }]} numberOfLines={2}>
-                  {item.name}
-                </Text>
-                <Text style={[styles.meta, { color: c.subtext }]}>
-                  {item.muscle} · {item.equipment}
-                  {item.popular && !trimmed ? '  ·  ⭐ Popular' : ''}
-                </Text>
-              </View>
-              {isAdded && <Text style={[styles.meta, { color: c.subtext }]}>Added</Text>}
-            </Pressable>
+            <View style={styles.row}>
+              <Pressable
+                onPress={() => onPick({ name: item.name, primary: item.primary, secondary: item.secondary })}
+                disabled={isAdded}
+                style={({ pressed }) => [styles.rowMain, { opacity: isAdded ? 0.45 : pressed ? 0.6 : 1 }]}>
+                <View style={[styles.thumb, { backgroundColor: c.inputBg }]}>
+                  <MuscleMap primary={item.primary} secondary={item.secondary} height={56} />
+                </View>
+                <View style={styles.flex}>
+                  <Text style={[styles.name, { color: c.text }]} numberOfLines={2}>
+                    {item.name}
+                  </Text>
+                  <Text style={[styles.meta, { color: c.subtext }]}>
+                    {isAdded ? 'Added · ' : ''}
+                    {item.muscle} · {item.equipment}
+                    {item.popular && !trimmed ? '  ·  ⭐ Popular' : ''}
+                  </Text>
+                </View>
+              </Pressable>
+              <Pressable
+                onPress={() => onInfo(item.name)}
+                hitSlop={10}
+                style={[styles.infoButton, { borderColor: c.border }]}>
+                <Text style={[styles.infoText, { color: c.subtext }]}>i</Text>
+              </Pressable>
+            </View>
           );
         }}
         ListEmptyComponent={
@@ -144,18 +152,26 @@ const styles = StyleSheet.create({
   chipRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   list: { paddingHorizontal: 16, paddingBottom: 40 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
+  rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
   thumb: {
-    width: 56,
-    height: 56,
+    width: 68,
+    height: 64,
     borderRadius: 10,
-    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  thumbFallback: { fontSize: 24 },
   name: { fontSize: 15, fontWeight: '700' },
   meta: { fontSize: 12, marginTop: 2 },
+  infoButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoText: { fontSize: 15, fontWeight: '800', fontStyle: 'italic' },
   empty: { textAlign: 'center', marginTop: 32 },
   createButton: {
     borderWidth: 1.5,

@@ -1,37 +1,38 @@
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import ExerciseInfo from '@/components/exercise-info';
 import ExercisePicker from '@/components/exercise-picker';
+import MuscleMap from '@/components/muscle-map';
+import RestPicker, { formatRest } from '@/components/rest-picker';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
-import { exerciseImageUrl } from '@/lib/exercise-library';
 import { supabase } from '@/lib/supabase';
 import {
-    Bests,
-    formatKg,
-    newId,
-    parseNumber,
-    RECORD_LABELS,
-    RECORD_TYPES,
-    RecordType,
-    recordValues,
+  Bests,
+  formatKg,
+  newId,
+  parseNumber,
+  RECORD_LABELS,
+  RECORD_TYPES,
+  RecordType,
+  recordValues,
 } from '@/lib/workout';
 
 // ---------- Types ----------
@@ -49,7 +50,8 @@ type PreviousSet = { set_number: number; weight: number | null; reps: number | n
 type LoggedExercise = {
   id: string;
   name: string;
-  image: string | null;
+  primary: string[];
+  secondary: string[];
   restSeconds: number;
   sets: LoggedSet[];
   previous: PreviousSet[];
@@ -70,7 +72,6 @@ type Props = {
 // ---------- Helpers ----------
 
 const DEFAULT_REST = 90;
-const REST_OPTIONS = [60, 90, 120, 180, 0]; // 0 = rest timer off
 
 function emptySet(): LoggedSet {
   return { id: newId(), weight: '', reps: '', done: false, prTypes: [] };
@@ -182,6 +183,8 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
   const [exercises, setExercises] = useState<LoggedExercise[]>([]);
   const [rest, setRest] = useState<{ endsAt: number; total: number } | null>(null);
   const [celebration, setCelebration] = useState<Celebration | null>(null);
+  const [restEditingId, setRestEditingId] = useState<string | null>(null);
+  const [infoFor, setInfoFor] = useState<string | null>(null);
 
   const [title, setTitle] = useState(() => defaultTitle(new Date()));
   const [visibility, setVisibility] = useState<'private' | 'public'>('private');
@@ -217,7 +220,7 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
     setExercises((list) => list.map((ex) => (ex.id === id ? change(ex) : ex)));
   }
 
-  async function addExercise(name: string, image: string | null) {
+  async function addExercise(name: string, primary: string[], secondary: string[]) {
     setScreen('log');
 
     const id = newId();
@@ -226,7 +229,8 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
       {
         id,
         name,
-        image,
+        primary,
+        secondary,
         restSeconds: DEFAULT_REST,
         sets: [emptySet()],
         previous: [],
@@ -276,10 +280,9 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
     ]);
   }
 
-  function cycleRest(ex: LoggedExercise) {
-    const index = REST_OPTIONS.indexOf(ex.restSeconds);
-    const next = REST_OPTIONS[(index + 1) % REST_OPTIONS.length];
-    updateExercise(ex.id, (e) => ({ ...e, restSeconds: next }));
+  function setExerciseRest(exId: string, seconds: number) {
+    updateExercise(exId, (e) => ({ ...e, restSeconds: seconds }));
+    setRestEditingId(null);
   }
 
   // ---------- Set actions ----------
@@ -370,7 +373,9 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
   }
 
   function handleBack() {
-    if (screen === 'log') confirmCancel();
+    if (infoFor) setInfoFor(null);
+    else if (restEditingId) setRestEditingId(null);
+    else if (screen === 'log') confirmCancel();
     else setScreen('log');
   }
 
@@ -425,7 +430,8 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
           {screen === 'pick' ? (
             <ExercisePicker
               addedNames={exercises.map((ex) => ex.name)}
-              onPick={({ name, image }) => addExercise(name, image)}
+              onPick={({ name, primary, secondary }) => addExercise(name, primary, secondary)}
+              onInfo={setInfoFor}
               onCancel={() => setScreen('log')}
             />
           ) : (
@@ -517,130 +523,118 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
                     </Text>
                   )}
 
-                  {exercises.map((ex) => {
-                    const uri = exerciseImageUrl(ex.image);
-                    return (
-                      <View key={ex.id} style={[styles.exerciseCard, { backgroundColor: c.card }]}>
-                        <View style={styles.exerciseHeader}>
-                          <View style={[styles.exerciseThumb, { backgroundColor: c.inputBg }]}>
-                            {uri ? (
-                              <Image
-                                source={{ uri }}
-                                style={styles.exerciseThumb}
-                                contentFit="cover"
-                                cachePolicy="memory-disk"
-                              />
-                            ) : (
-                              <Text>🏋️</Text>
-                            )}
-                          </View>
-                          <Text style={[styles.exerciseName, { color: c.accent }]} numberOfLines={2}>
-                            {ex.name}
-                          </Text>
-                          {ex.loading && <ActivityIndicator size="small" />}
-                          <Pressable onPress={() => removeExercise(ex)} hitSlop={10}>
-                            <Text style={[styles.removeText, { color: c.subtext }]}>✕</Text>
-                          </Pressable>
+                  {exercises.map((ex) => (
+                    <View key={ex.id} style={[styles.exerciseCard, { backgroundColor: c.card }]}>
+                      <View style={styles.exerciseHeader}>
+                        <View style={[styles.exerciseThumb, { backgroundColor: c.inputBg }]}>
+                          <MuscleMap primary={ex.primary} secondary={ex.secondary} height={40} />
                         </View>
-
+                        <Text style={[styles.exerciseName, { color: c.accent }]} numberOfLines={2}>
+                          {ex.name}
+                        </Text>
+                        {ex.loading && <ActivityIndicator size="small" />}
                         <Pressable
-                          onPress={() => cycleRest(ex)}
-                          style={[styles.restChip, { backgroundColor: c.inputBg }]}>
-                          <Text style={[styles.restChipText, { color: c.subtext }]}>
-                            ⏱ Rest {ex.restSeconds > 0 ? formatClock(ex.restSeconds) : 'off'}
-                          </Text>
+                          onPress={() => setInfoFor(ex.name)}
+                          hitSlop={10}
+                          style={[styles.infoButton, { borderColor: c.border }]}>
+                          <Text style={[styles.infoText, { color: c.subtext }]}>i</Text>
                         </Pressable>
-
-                        <View style={styles.setHeaderRow}>
-                          <Text style={[styles.colSet, styles.colHeader, { color: c.subtext }]}>SET</Text>
-                          <Text style={[styles.colPrev, styles.colHeader, { color: c.subtext }]}>PREVIOUS</Text>
-                          <Text style={[styles.colInput, styles.colHeader, { color: c.subtext }]}>KG</Text>
-                          <Text style={[styles.colInput, styles.colHeader, { color: c.subtext }]}>REPS</Text>
-                          <View style={styles.colCheck} />
-                        </View>
-
-                        {ex.sets.map((set, i) => {
-                          const prev = ex.previous[i];
-                          return (
-                            <ReanimatedSwipeable
-                              key={set.id}
-                              friction={2}
-                              rightThreshold={40}
-                              overshootRight={false}
-                              renderRightActions={() => (
-                                <Pressable
-                                  onPress={() => deleteSet(ex.id, set.id)}
-                                  style={[styles.deleteAction, { backgroundColor: c.error }]}>
-                                  <Text style={styles.deleteText}>Delete</Text>
-                                </Pressable>
-                              )}>
-                              <View
-                                style={[
-                                  styles.setRow,
-                                  { backgroundColor: set.done ? c.successSoft : c.card },
-                                ]}>
-                                <View style={styles.colSet}>
-                                  <Text
-                                    style={[
-                                      styles.setNumber,
-                                      { color: set.prTypes.length ? c.gold : c.text },
-                                    ]}>
-                                    {set.prTypes.length ? '🏆' : i + 1}
-                                  </Text>
-                                </View>
-                                <Text style={[styles.colPrev, styles.prevText, { color: c.subtext }]}>
-                                  {formatPrevious(prev)}
-                                </Text>
-                                <TextInput
-                                  style={[
-                                    styles.colInput,
-                                    styles.setInput,
-                                    { backgroundColor: c.inputBg, color: c.text },
-                                  ]}
-                                  value={set.weight}
-                                  onChangeText={(v) => editSet(ex.id, set.id, 'weight', v)}
-                                  placeholder={prev?.weight != null ? String(prev.weight) : '–'}
-                                  placeholderTextColor={c.subtext}
-                                  keyboardType="decimal-pad"
-                                  editable={!set.done}
-                                />
-                                <TextInput
-                                  style={[
-                                    styles.colInput,
-                                    styles.setInput,
-                                    { backgroundColor: c.inputBg, color: c.text },
-                                  ]}
-                                  value={set.reps}
-                                  onChangeText={(v) => editSet(ex.id, set.id, 'reps', v)}
-                                  placeholder={prev?.reps != null ? String(prev.reps) : '–'}
-                                  placeholderTextColor={c.subtext}
-                                  keyboardType="number-pad"
-                                  editable={!set.done}
-                                />
-                                <Pressable
-                                  onPress={() => toggleSet(ex, i)}
-                                  style={[
-                                    styles.colCheck,
-                                    styles.checkButton,
-                                    { backgroundColor: set.done ? c.success : c.inputBg },
-                                  ]}>
-                                  <Text style={[styles.checkText, { color: set.done ? '#FFFFFF' : c.subtext }]}>
-                                    ✓
-                                  </Text>
-                                </Pressable>
-                              </View>
-                            </ReanimatedSwipeable>
-                          );
-                        })}
-
-                        <Pressable
-                          onPress={() => addSet(ex.id)}
-                          style={[styles.addSetButton, { backgroundColor: c.inputBg }]}>
-                          <Text style={[styles.addSetText, { color: c.text }]}>+ Add set</Text>
+                        <Pressable onPress={() => removeExercise(ex)} hitSlop={10}>
+                          <Text style={[styles.removeText, { color: c.subtext }]}>✕</Text>
                         </Pressable>
                       </View>
-                    );
-                  })}
+
+                      <Pressable
+                        onPress={() => setRestEditingId(ex.id)}
+                        style={[styles.restChip, { backgroundColor: c.inputBg }]}>
+                        <Text style={[styles.restChipText, { color: c.subtext }]}>
+                          ⏱ Rest {formatRest(ex.restSeconds)}
+                        </Text>
+                      </Pressable>
+
+                      <View style={styles.setHeaderRow}>
+                        <Text style={[styles.colSet, styles.colHeader, { color: c.subtext }]}>SET</Text>
+                        <Text style={[styles.colPrev, styles.colHeader, { color: c.subtext }]}>PREVIOUS</Text>
+                        <Text style={[styles.colInput, styles.colHeader, { color: c.subtext }]}>KG</Text>
+                        <Text style={[styles.colInput, styles.colHeader, { color: c.subtext }]}>REPS</Text>
+                        <View style={styles.colCheck} />
+                      </View>
+
+                      {ex.sets.map((set, i) => {
+                        const prev = ex.previous[i];
+                        return (
+                          <ReanimatedSwipeable
+                            key={set.id}
+                            friction={2}
+                            rightThreshold={40}
+                            overshootRight={false}
+                            renderRightActions={() => (
+                              <Pressable
+                                onPress={() => deleteSet(ex.id, set.id)}
+                                style={[styles.deleteAction, { backgroundColor: c.error }]}>
+                                <Text style={styles.deleteText}>Delete</Text>
+                              </Pressable>
+                            )}>
+                            <View
+                              style={[styles.setRow, { backgroundColor: set.done ? c.successSoft : c.card }]}>
+                              <View style={styles.colSet}>
+                                <Text
+                                  style={[styles.setNumber, { color: set.prTypes.length ? c.gold : c.text }]}>
+                                  {set.prTypes.length ? '🏆' : i + 1}
+                                </Text>
+                              </View>
+                              <Text style={[styles.colPrev, styles.prevText, { color: c.subtext }]}>
+                                {formatPrevious(prev)}
+                              </Text>
+                              <TextInput
+                                style={[
+                                  styles.colInput,
+                                  styles.setInput,
+                                  { backgroundColor: c.inputBg, color: c.text },
+                                ]}
+                                value={set.weight}
+                                onChangeText={(v) => editSet(ex.id, set.id, 'weight', v)}
+                                placeholder={prev?.weight != null ? String(prev.weight) : '–'}
+                                placeholderTextColor={c.subtext}
+                                keyboardType="decimal-pad"
+                                editable={!set.done}
+                              />
+                              <TextInput
+                                style={[
+                                  styles.colInput,
+                                  styles.setInput,
+                                  { backgroundColor: c.inputBg, color: c.text },
+                                ]}
+                                value={set.reps}
+                                onChangeText={(v) => editSet(ex.id, set.id, 'reps', v)}
+                                placeholder={prev?.reps != null ? String(prev.reps) : '–'}
+                                placeholderTextColor={c.subtext}
+                                keyboardType="number-pad"
+                                editable={!set.done}
+                              />
+                              <Pressable
+                                onPress={() => toggleSet(ex, i)}
+                                style={[
+                                  styles.colCheck,
+                                  styles.checkButton,
+                                  { backgroundColor: set.done ? c.success : c.inputBg },
+                                ]}>
+                                <Text style={[styles.checkText, { color: set.done ? '#FFFFFF' : c.subtext }]}>
+                                  ✓
+                                </Text>
+                              </Pressable>
+                            </View>
+                          </ReanimatedSwipeable>
+                        );
+                      })}
+
+                      <Pressable
+                        onPress={() => addSet(ex.id)}
+                        style={[styles.addSetButton, { backgroundColor: c.inputBg }]}>
+                        <Text style={[styles.addSetText, { color: c.text }]}>+ Add set</Text>
+                      </Pressable>
+                    </View>
+                  ))}
 
                   <Pressable
                     onPress={() => setScreen('pick')}
@@ -650,7 +644,7 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
 
                   {exercises.length > 0 && (
                     <Text style={[styles.tip, { color: c.subtext }]}>
-                      Tip: swipe a set left to delete it. Tap the rest chip to change rest time.
+                      Tip: swipe a set left to delete it. Tap the rest chip to set the rest time.
                     </Text>
                   )}
                 </ScrollView>
@@ -695,6 +689,17 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
               )}
             </KeyboardAvoidingView>
           )}
+
+          {restEditingId && (
+            <RestPicker
+              exerciseName={exercises.find((e) => e.id === restEditingId)?.name ?? ''}
+              value={exercises.find((e) => e.id === restEditingId)?.restSeconds ?? DEFAULT_REST}
+              onSave={(seconds) => setExerciseRest(restEditingId, seconds)}
+              onClose={() => setRestEditingId(null)}
+            />
+          )}
+
+          {infoFor && <ExerciseInfo name={infoFor} onClose={() => setInfoFor(null)} />}
 
           {celebration && (
             <PRCelebration celebration={celebration} colors={c} onDone={() => setCelebration(null)} />
@@ -776,15 +781,23 @@ const styles = StyleSheet.create({
   exerciseCard: { borderRadius: 16, padding: 14, gap: 8 },
   exerciseHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   exerciseThumb: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     borderRadius: 10,
-    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
   exerciseName: { fontSize: 17, fontWeight: '800', flex: 1 },
   removeText: { fontSize: 18, paddingHorizontal: 4 },
+  infoButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoText: { fontSize: 14, fontWeight: '800', fontStyle: 'italic' },
   restChip: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   restChipText: { fontSize: 12, fontWeight: '600' },
 
@@ -846,6 +859,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 30,
+    elevation: 30,
   },
   celebrationCard: {
     borderWidth: 2,
