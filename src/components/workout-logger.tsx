@@ -20,7 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import ExerciseInfo from '@/components/exercise-info';
 import ExercisePicker from '@/components/exercise-picker';
-import MuscleMap from '@/components/muscle-map';
+import ExerciseThumb from '@/components/exercise-thumb';
 import RestPicker, { formatRest } from '@/components/rest-picker';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
 import { supabase } from '@/lib/supabase';
@@ -50,8 +50,7 @@ type PreviousSet = { set_number: number; weight: number | null; reps: number | n
 type LoggedExercise = {
   id: string;
   name: string;
-  primary: string[];
-  secondary: string[];
+  gif: string | null;
   restSeconds: number;
   sets: LoggedSet[];
   previous: PreviousSet[];
@@ -220,7 +219,7 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
     setExercises((list) => list.map((ex) => (ex.id === id ? change(ex) : ex)));
   }
 
-  async function addExercise(name: string, primary: string[], secondary: string[]) {
+  async function addExercise(name: string, gif: string | null) {
     setScreen('log');
 
     const id = newId();
@@ -229,8 +228,7 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
       {
         id,
         name,
-        primary,
-        secondary,
+        gif,
         restSeconds: DEFAULT_REST,
         sets: [emptySet()],
         previous: [],
@@ -430,7 +428,7 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
           {screen === 'pick' ? (
             <ExercisePicker
               addedNames={exercises.map((ex) => ex.name)}
-              onPick={({ name, primary, secondary }) => addExercise(name, primary, secondary)}
+              onPick={({ name, gif }) => addExercise(name, gif)}
               onInfo={setInfoFor}
               onCancel={() => setScreen('log')}
             />
@@ -526,9 +524,7 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
                   {exercises.map((ex) => (
                     <View key={ex.id} style={[styles.exerciseCard, { backgroundColor: c.card }]}>
                       <View style={styles.exerciseHeader}>
-                        <View style={[styles.exerciseThumb, { backgroundColor: c.inputBg }]}>
-                          <MuscleMap primary={ex.primary} secondary={ex.secondary} height={40} />
-                        </View>
+                        <ExerciseThumb gif={ex.gif} size={52} />
                         <Text style={[styles.exerciseName, { color: c.accent }]} numberOfLines={2}>
                           {ex.name}
                         </Text>

@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { Pressable, ScrollView, StyleSheet, Text, useColorScheme, View } from 'react-native';
 
 import MuscleMap from '@/components/muscle-map';
@@ -28,6 +29,18 @@ export default function ExerciseInfo({ name, onClose }: Props) {
 
       {ex ? (
         <ScrollView contentContainerStyle={styles.content}>
+          {ex.gif ? (
+            <View style={styles.gifCard}>
+              <Image
+                source={{ uri: ex.gif }}
+                style={styles.gif}
+                contentFit="contain"
+                cachePolicy="memory-disk"
+                transition={150}
+              />
+            </View>
+          ) : null}
+
           <View style={[styles.mapCard, { backgroundColor: c.card }]}>
             <MuscleMap primary={ex.primary} secondary={ex.secondary} height={220} />
             <View style={styles.legend}>
@@ -78,6 +91,10 @@ export default function ExerciseInfo({ name, onClose }: Props) {
           ) : (
             <Text style={{ color: c.subtext }}>No instructions available for this exercise yet.</Text>
           )}
+
+          <Text style={[styles.credit, { color: c.subtext }]}>
+            Exercise animation and instructions by ExerciseDB (exercisedb.dev)
+          </Text>
         </ScrollView>
       ) : (
         <View style={styles.empty}>
@@ -130,6 +147,14 @@ const styles = StyleSheet.create({
   title: { flex: 1, fontSize: 19, fontWeight: '800' },
   close: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 16, gap: 12, paddingBottom: 48 },
+  gifCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    overflow: 'hidden',
+    alignItems: 'center',
+  },
+  gif: { width: '100%', aspectRatio: 1, maxHeight: 320 },
+  credit: { fontSize: 11, textAlign: 'center', marginTop: 16 },
   mapCard: { borderRadius: 20, paddingVertical: 20, alignItems: 'center', gap: 14 },
   legend: { flexDirection: 'row', gap: 18 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },

@@ -14,11 +14,12 @@ export type LibraryExercise = {
   mechanic: string;
   instructions: string[];
   popular: boolean;
+  gif: string | null;
 };
 
 export const EXERCISE_LIBRARY = data as LibraryExercise[];
 
-export const MUSCLE_GROUPS = ['All', 'Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Core'];
+export const MUSCLE_GROUPS = ['All', 'Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Core', 'Cardio'];
 
 const BY_NAME = new Map(EXERCISE_LIBRARY.map((e) => [e.name.toLowerCase(), e]));
 

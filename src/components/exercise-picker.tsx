@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import MuscleMap from '@/components/muscle-map';
+import ExerciseThumb from '@/components/exercise-thumb';
 import { useRepzyColors } from '@/constants/repzy-colors';
 import { EXERCISE_LIBRARY, MUSCLE_GROUPS, searchExercises } from '@/lib/exercise-library';
 
-type Picked = { name: string; primary: string[]; secondary: string[] };
+type Picked = { name: string; gif: string | null };
 
 type Props = {
   addedNames: string[];
@@ -32,7 +32,7 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
       `Add "${trimmed}" as your own exercise? Use the same name every time so your PRs and history match up.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Create', onPress: () => onPick({ name: trimmed, primary: [], secondary: [] }) },
+        { text: 'Create', onPress: () => onPick({ name: trimmed, gif: null }) },
       ],
     );
   }
@@ -93,12 +93,10 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
           return (
             <View style={styles.row}>
               <Pressable
-                onPress={() => onPick({ name: item.name, primary: item.primary, secondary: item.secondary })}
+                onPress={() => onPick({ name: item.name, gif: item.gif })}
                 disabled={isAdded}
                 style={({ pressed }) => [styles.rowMain, { opacity: isAdded ? 0.45 : pressed ? 0.6 : 1 }]}>
-                <View style={[styles.thumb, { backgroundColor: c.inputBg }]}>
-                  <MuscleMap primary={item.primary} secondary={item.secondary} height={56} />
-                </View>
+                <ExerciseThumb gif={item.gif} size={64} />
                 <View style={styles.flex}>
                   <Text style={[styles.name, { color: c.text }]} numberOfLines={2}>
                     {item.name}
@@ -123,11 +121,14 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
           <Text style={[styles.empty, { color: c.subtext }]}>No exercises found. Try a different word.</Text>
         }
         ListFooterComponent={
-          canCreate ? (
-            <Pressable onPress={createCustom} style={[styles.createButton, { borderColor: c.accent }]}>
-              <Text style={{ color: c.accent, fontWeight: '700' }}>+ Create "{trimmed}" as a custom exercise</Text>
-            </Pressable>
-          ) : null
+          <>
+            {canCreate ? (
+              <Pressable onPress={createCustom} style={[styles.createButton, { borderColor: c.accent }]}>
+                <Text style={{ color: c.accent, fontWeight: '700' }}>+ Create "{trimmed}" as a custom exercise</Text>
+              </Pressable>
+            ) : null}
+            <Text style={[styles.credit, { color: c.subtext }]}>Exercise animations by ExerciseDB</Text>
+          </>
         }
       />
     </View>
@@ -154,13 +155,6 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, paddingBottom: 40 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  thumb: {
-    width: 68,
-    height: 64,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   name: { fontSize: 15, fontWeight: '700' },
   meta: { fontSize: 12, marginTop: 2 },
   infoButton: {
@@ -173,6 +167,7 @@ const styles = StyleSheet.create({
   },
   infoText: { fontSize: 15, fontWeight: '800', fontStyle: 'italic' },
   empty: { textAlign: 'center', marginTop: 32 },
+  credit: { textAlign: 'center', fontSize: 11, marginTop: 20 },
   createButton: {
     borderWidth: 1.5,
     borderStyle: 'dashed',
