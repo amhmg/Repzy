@@ -8,7 +8,6 @@ import { Platform } from 'react-native';
 
 const REST_CHANNEL = 'rest-timer';
 const ACTIVE_CHANNEL = 'workout-active';
-const ACTIVE_ID = 'repzy-active-workout';
 
 export type RepzyNotificationType = 'rest' | 'active';
 
@@ -110,7 +109,34 @@ export async function cancelRestDone() {
   }
 }
 
-export async function showActiveWorkout(info: {
+// Removes every "Workout in progress" notification on screen. We give each update its
+// own id (Expo Go crashes if an id is reused), so look them up by type instead of id.
+async function dismissActiveNotifications() {
+  try {
+    const shown = await Notifications.getPresentedNotificationsAsync();
+    await Promise.all(
+      shown
+        .filter((n) => n.request.content.data?.type === 'active')
+        .map((n) => Notifications.dismissNotificationAsync(n.request.identifier)),
+    );
+  } catch {
+    // nothing to dismiss
+  }
+}
+
+// Updates run one at a time so two quick updates can't leave two notifications behind
+let activeQueue: Promise<void> = Promise.resolve();
+
+export function showActiveWorkout(info: {
+  startedAt: Date;
+  doneSets: number;
+  currentExercise: string | null;
+}) {
+  activeQueue = activeQueue.then(() => presentActiveWorkout(info)).catch(() => {});
+  return activeQueue;
+}
+
+async function presentActiveWorkout(info: {
   startedAt: Date;
   doneSets: number;
   currentExercise: string | null;
@@ -121,9 +147,10 @@ export async function showActiveWorkout(info: {
   const parts = [`Started ${started}`, `${info.doneSets} set${info.doneSets === 1 ? '' : 's'} done`];
   if (info.currentExercise) parts.push(info.currentExercise);
 
+  await dismissActiveNotifications();
   try {
     await Notifications.scheduleNotificationAsync({
-      identifier: ACTIVE_ID, // same id replaces the previous one instead of stacking
+      identifier: `repzy-active-${Date.now()}`,
       content: {
         title: '🏋️ Workout in progress',
         body: parts.join(' · '),
@@ -141,9 +168,7 @@ export async function showActiveWorkout(info: {
 
 export async function clearWorkoutNotifications() {
   await cancelRestDone();
-  try {
-    await Notifications.dismissNotificationAsync(ACTIVE_ID);
-  } catch {
-    // nothing to clear
-  }
+  // wait for any update in flight, then remove what's on screen
+  activeQueue = activeQueue.then(dismissActiveNotifications).catch(() => {});
+  await activeQueue;
 }
