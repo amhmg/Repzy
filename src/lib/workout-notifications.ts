@@ -1,4 +1,4 @@
-import * as Notifications from 'expo-notifications';
+import * as Notifications from '@/lib/notifications';
 import { Platform } from 'react-native';
 
 // Two kinds of notification:
