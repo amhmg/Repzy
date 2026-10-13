@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import AppHeader, { ActiveWorkoutBanner } from '@/components/app-header';
 import GroupDetail, { shareInvite } from '@/components/group-detail';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
 import { createGroup, fetchMyGroups, GroupSummary, joinGroup, relativeTime } from '@/lib/groups';
@@ -62,10 +63,8 @@ export default function GroupsScreen() {
 
   return (
     <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]} edges={['top']}>
-      <View style={styles.top}>
-        <Text style={[styles.title, { color: c.text }]}>Groups</Text>
-        <Text style={{ color: c.subtext }}>Train together. Stay accountable.</Text>
-      </View>
+      <AppHeader title="Groups" subtitle="Train together. Stay accountable." />
+      <ActiveWorkoutBanner />
 
       <View style={styles.actions}>
         <Pressable
@@ -293,7 +292,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   top: { paddingHorizontal: 20, paddingTop: 16, gap: 2 },
   title: { fontSize: 32, fontWeight: '800', letterSpacing: -0.5 },
-  actions: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  actions: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8 },
   action: { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   actionText: { fontWeight: '800', fontSize: 15 },
   actionTextLight: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },

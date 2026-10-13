@@ -9,6 +9,7 @@ import {
   SectionList,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -31,13 +32,15 @@ import {
   WorkoutDetail,
   WorkoutSummary,
 } from '@/lib/history';
+import { useSettings } from '@/lib/settings';
 import { estimateOneRepMax, formatKg } from '@/lib/workout';
-
-type Props = { onClose: () => void };
+import { draftFromWorkout } from '@/lib/workout-draft';
+import { useWorkoutSession } from '@/lib/workout-session';
 
 const VISIBILITY_ICON = { private: '🔒', group: '👥', public: '🌍' } as const;
 
-export default function WorkoutHistory({ onClose }: Props) {
+// The History list inside Progress: searchable, grouped by month, newest first.
+export default function HistoryList({ reloadKey }: { reloadKey?: number }) {
   const c = useRepzyColors();
 
   const [workouts, setWorkouts] = useState<WorkoutSummary[]>([]);
@@ -46,24 +49,35 @@ export default function WorkoutHistory({ onClose }: Props) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
-  const [infoFor, setInfoFor] = useState<string | null>(null);
+
+  // Wait until typing pauses before searching
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), 350);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const loadFirstPage = useCallback(async () => {
     setError(null);
     try {
-      const { rows, hasMore: more } = await fetchWorkoutHistory();
+      const { rows, hasMore: more } = await fetchWorkoutHistory(undefined, { search: query });
       setWorkouts(rows);
       setHasMore(more);
     } catch (e: any) {
-      setError(e.message ?? 'Could not load your workouts');
+      setError(
+        query && String(e.message).includes('p_search')
+          ? 'Search needs the latest database update. Run the SQL from the update notes.'
+          : (e.message ?? 'Could not load your workouts'),
+      );
     }
-  }, []);
+  }, [query]);
 
   useEffect(() => {
+    setLoading(true);
     loadFirstPage().finally(() => setLoading(false));
-  }, [loadFirstPage]);
+  }, [loadFirstPage, reloadKey]);
 
   async function refresh() {
     setRefreshing(true);
@@ -76,7 +90,7 @@ export default function WorkoutHistory({ onClose }: Props) {
     setLoadingMore(true);
     try {
       const last = workouts[workouts.length - 1];
-      const { rows, hasMore: more } = await fetchWorkoutHistory(workoutDate(last).toISOString());
+      const { rows, hasMore: more } = await fetchWorkoutHistory(workoutDate(last).toISOString(), { search: query });
       setWorkouts((list) => [...list, ...rows.filter((r) => !list.some((w) => w.id === r.id))]);
       setHasMore(more);
     } catch {
@@ -84,12 +98,6 @@ export default function WorkoutHistory({ onClose }: Props) {
     } finally {
       setLoadingMore(false);
     }
-  }
-
-  function handleBack() {
-    if (infoFor) setInfoFor(null);
-    else if (openId) setOpenId(null);
-    else onClose();
   }
 
   // Group by month
@@ -101,79 +109,104 @@ export default function WorkoutHistory({ onClose }: Props) {
     else sections.push({ title, data: [w] });
   }
 
-  const thisMonth = formatMonth(new Date());
-  const monthCount = sections.find((s) => s.title === thisMonth)?.data.length ?? 0;
+  return (
+    <View style={styles.flex}>
+      <View style={styles.searchWrap}>
+        <TextInput
+          style={[styles.search, { backgroundColor: c.inputBg, color: c.text }]}
+          value={search}
+          onChangeText={setSearch}
+          placeholder="🔍  Search by workout or exercise"
+          placeholderTextColor={c.subtext}
+          autoCorrect={false}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+        />
+      </View>
+
+      {loading ? (
+        <ActivityIndicator style={styles.loading} />
+      ) : error ? (
+        <View style={styles.centered}>
+          <Text style={{ color: c.error, textAlign: 'center' }}>{error}</Text>
+          <Pressable onPress={refresh} style={[styles.retry, { backgroundColor: c.accent }]}>
+            <Text style={styles.retryText}>Try again</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <SectionList
+          sections={sections}
+          keyExtractor={(w) => w.id}
+          contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          stickySectionHeadersEnabled={false}
+          keyboardDismissMode="on-drag"
+          renderSectionHeader={({ section }) => (
+            <Text style={[styles.monthHeader, { color: c.subtext }]}>
+              {section.title} · {section.data.length}
+            </Text>
+          )}
+          renderItem={({ item }) => <WorkoutCard workout={item} colors={c} onPress={() => setOpenId(item.id)} />}
+          ListEmptyComponent={
+            <View style={styles.centered}>
+              <Text style={styles.emptyEmoji}>{query ? '🔍' : '📋'}</Text>
+              <Text style={[styles.emptyText, { color: c.subtext }]}>
+                {query
+                  ? `No workouts match “${query}”.`
+                  : 'No workouts yet. Finish a workout and it will show up here.'}
+              </Text>
+            </View>
+          }
+          ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.loading} /> : null}
+        />
+      )}
+
+      {openId && (
+        <WorkoutDetailModal
+          id={openId}
+          onClose={() => setOpenId(null)}
+          onDeleted={() => {
+            setWorkouts((list) => list.filter((w) => w.id !== openId));
+            setOpenId(null);
+          }}
+        />
+      )}
+    </View>
+  );
+}
+
+// A workout's full detail in its own window (used by History, Home and anywhere else)
+export function WorkoutDetailModal({
+  id,
+  onClose,
+  onDeleted,
+  canDelete = true,
+  ownerLabel,
+}: {
+  id: string;
+  onClose: () => void;
+  onDeleted?: () => void;
+  canDelete?: boolean;
+  ownerLabel?: string;
+}) {
+  const c = useRepzyColors();
+  const [infoFor, setInfoFor] = useState<string | null>(null);
 
   return (
-    <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={handleBack}>
+    <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={() => (infoFor ? setInfoFor(null) : onClose())}>
       <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
-        {openId ? (
-          <WorkoutDetailView
-            id={openId}
-            colors={c}
-            onBack={() => setOpenId(null)}
-            onInfo={setInfoFor}
-            onDeleted={() => {
-              setWorkouts((list) => list.filter((w) => w.id !== openId));
-              setOpenId(null);
-            }}
-          />
-        ) : (
-          <>
-            <View style={[styles.header, { borderBottomColor: c.border }]}>
-              <Pressable onPress={onClose} hitSlop={10}>
-                <Text style={[styles.headerSide, { color: c.subtext }]}>Close</Text>
-              </Pressable>
-              <Text style={[styles.headerTitle, { color: c.text }]}>History</Text>
-              <View style={styles.headerSide} />
-            </View>
-
-            {loading ? (
-              <ActivityIndicator style={styles.loading} />
-            ) : error ? (
-              <View style={styles.centered}>
-                <Text style={{ color: c.error, textAlign: 'center' }}>{error}</Text>
-                <Pressable onPress={refresh} style={[styles.retry, { backgroundColor: c.accent }]}>
-                  <Text style={styles.retryText}>Try again</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <SectionList
-                sections={sections}
-                keyExtractor={(w) => w.id}
-                contentContainerStyle={styles.list}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-                onEndReached={loadMore}
-                onEndReachedThreshold={0.4}
-                stickySectionHeadersEnabled={false}
-                ListHeaderComponent={
-                  workouts.length > 0 ? (
-                    <View style={[styles.summary, { backgroundColor: c.card }]}>
-                      <Stat label="Workouts shown" value={String(workouts.length)} colors={c} />
-                      <Stat label="This month" value={String(monthCount)} colors={c} />
-                    </View>
-                  ) : null
-                }
-                renderSectionHeader={({ section }) => (
-                  <Text style={[styles.monthHeader, { color: c.subtext }]}>{section.title}</Text>
-                )}
-                renderItem={({ item }) => (
-                  <WorkoutCard workout={item} colors={c} onPress={() => setOpenId(item.id)} />
-                )}
-                ListEmptyComponent={
-                  <View style={styles.centered}>
-                    <Text style={styles.emptyEmoji}>📋</Text>
-                    <Text style={[styles.emptyText, { color: c.subtext }]}>
-                      No workouts yet. Finish a workout and it will show up here.
-                    </Text>
-                  </View>
-                }
-                ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.loading} /> : null}
-              />
-            )}
-          </>
-        )}
-
+        <WorkoutDetailView
+          id={id}
+          colors={c}
+          onBack={onClose}
+          onInfo={setInfoFor}
+          onDeleted={onDeleted}
+          onRepeatStarted={onClose}
+          canDelete={canDelete}
+          ownerLabel={ownerLabel}
+        />
         {infoFor && <ExerciseInfo name={infoFor} onClose={() => setInfoFor(null)} />}
       </SafeAreaView>
     </Modal>
@@ -182,7 +215,7 @@ export default function WorkoutHistory({ onClose }: Props) {
 
 // ---------- Workout card ----------
 
-function WorkoutCard({
+export function WorkoutCard({
   workout,
   colors: c,
   onPress,
@@ -241,6 +274,7 @@ export function WorkoutDetailView({
   onDeleted,
   canDelete = true,
   ownerLabel,
+  onRepeatStarted,
 }: {
   id: string;
   colors: RepzyColors;
@@ -249,7 +283,10 @@ export function WorkoutDetailView({
   onDeleted?: () => void;
   canDelete?: boolean; // false when viewing someone else's workout
   ownerLabel?: string; // e.g. "@sam", shown under the title
+  onRepeatStarted?: () => void; // close whatever is showing this, so the workout is visible
 }) {
+  const session = useWorkoutSession();
+  const { settings } = useSettings();
   const [detail, setDetail] = useState<WorkoutDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -349,6 +386,15 @@ export function WorkoutDetailView({
             );
           })}
 
+          <Pressable
+            onPress={() => {
+              session.startWith(draftFromWorkout(detail, settings.defaultRestSeconds));
+              onRepeatStarted?.();
+            }}
+            style={({ pressed }) => [styles.repeatButton, { backgroundColor: c.accent, opacity: pressed ? 0.8 : 1 }]}>
+            <Text style={styles.repeatText}>↻ Do this workout again</Text>
+          </Pressable>
+
           {canDelete && (
           <Pressable
             onPress={confirmDelete}
@@ -426,5 +472,9 @@ const styles = StyleSheet.create({
   setRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 3 },
   setNumber: { width: 20, textAlign: 'center', fontWeight: '700' },
   setText: { fontSize: 15, fontWeight: '600' },
+  repeatButton: { borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 12 },
+  repeatText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
+  searchWrap: { paddingHorizontal: 16, paddingBottom: 4 },
+  search: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
   deleteButton: { borderWidth: 1.5, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 12 },
 });

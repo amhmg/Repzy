@@ -25,7 +25,7 @@ export type WorkoutDetail = {
   started_at: string | null;
   created_at: string;
   duration_minutes: number | null;
-  exercises: { id: string; name: string; order_index: number; sets: HistorySet[] }[];
+  exercises: { id: string; name: string; order_index: number; rest_seconds: number | null; sets: HistorySet[] }[];
 };
 
 export type ExerciseSession = {
@@ -49,21 +49,24 @@ export function workoutDate(w: { started_at: string | null; created_at: string }
   return new Date(w.started_at ?? w.created_at);
 }
 
-export async function fetchWorkoutHistory(before?: string) {
-  const { data, error } = await supabase.rpc('get_workout_history', {
-    p_limit: PAGE_SIZE,
-    p_before: before ?? null,
-  });
+export async function fetchWorkoutHistory(before?: string, options?: { search?: string; limit?: number }) {
+  const limit = options?.limit ?? PAGE_SIZE;
+  const search = options?.search?.trim();
+  const { data, error } = await supabase.rpc(
+    'get_workout_history',
+    // only send p_search when searching, so this still works before the search update is installed
+    search ? { p_limit: limit, p_before: before ?? null, p_search: search } : { p_limit: limit, p_before: before ?? null },
+  );
   if (error) throw error;
   const rows = ((data ?? []) as WorkoutSummary[]).map((w) => ({ ...w, volume: Number(w.volume) }));
-  return { rows, hasMore: rows.length === PAGE_SIZE };
+  return { rows, hasMore: rows.length === limit };
 }
 
 export async function fetchWorkoutDetail(id: string): Promise<WorkoutDetail> {
   const { data, error } = await supabase
     .from('workouts')
     .select(
-      'id, title, visibility, started_at, created_at, duration_minutes, exercises(id, name, order_index, sets(set_number, weight, reps))',
+      'id, title, visibility, started_at, created_at, duration_minutes, exercises(id, name, order_index, rest_seconds, sets(set_number, weight, reps))',
     )
     .eq('id', id)
     .single();

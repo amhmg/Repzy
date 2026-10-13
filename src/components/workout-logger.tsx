@@ -1,4 +1,3 @@
-import * as Haptics from 'expo-haptics';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -24,6 +23,8 @@ import ExerciseThumb from '@/components/exercise-thumb';
 import RestPicker, { formatRest } from '@/components/rest-picker';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
 import { fetchMyGroups, GroupSummary } from '@/lib/groups';
+import * as haptics from '@/lib/haptics';
+import { getSettings } from '@/lib/settings';
 import { supabase } from '@/lib/supabase';
 import {
   Bests,
@@ -93,6 +94,13 @@ function defaultTitle(date: Date) {
   if (hour < 12) return 'Morning workout';
   if (hour < 17) return 'Afternoon workout';
   return 'Evening workout';
+}
+
+function formatRepRange(min: number | null, max: number | null) {
+  if (min && max) return min === max ? `${min} reps` : `${min}–${max} reps`;
+  if (min) return `${min}+ reps`;
+  if (max) return `up to ${max} reps`;
+  return 'any reps';
 }
 
 function formatPrevious(p?: PreviousSet) {
@@ -209,7 +217,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
       setRest(null);
       cancelRestDone();
       // Only buzz if we were watching; coming back to the app long after shouldn't vibrate
-      if (now - rest.endsAt < 3000) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      if (now - rest.endsAt < 3000) haptics.notify(haptics.NotifyType.Warning);
     }
   }, [now, rest]);
 
@@ -311,7 +319,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
         id,
         name,
         gif,
-        restSeconds: DEFAULT_REST,
+        restSeconds: getSettings().defaultRestSeconds,
         sets: [emptySet()],
         previous: [],
         hasHistory: false,
@@ -348,7 +356,8 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
         hasHistory: Object.keys(historicBest).length > 0,
         loading: false,
         // Start with as many sets as last time, like Hevy
-        sets: untouched && previous.length > 1 ? previous.map(() => emptySet()) : ex.sets,
+        // routines keep their target set count
+        sets: untouched && !ex.target && previous.length > 1 ? previous.map(() => emptySet()) : ex.sets,
       });
     });
   }
@@ -376,7 +385,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
   }
 
   function deleteSet(exId: string, setId: string) {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    haptics.impact(haptics.ImpactStyle.Medium);
     updateExercise(exId, (ex) => markPRs({ ...ex, sets: ex.sets.filter((s) => s.id !== setId) }));
   }
 
@@ -427,9 +436,9 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
         exercise: ex.name,
         lines: tickedSet.prTypes.map((type) => `${RECORD_LABELS[type]} · ${formatKg(values[type])}`),
       });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      haptics.notify(haptics.NotifyType.Success);
     } else {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      haptics.impact(haptics.ImpactStyle.Light);
     }
 
     if (ex.restSeconds > 0) {
@@ -703,6 +712,19 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                         </Pressable>
                       </View>
 
+                      {(ex.target || ex.notes) && (
+                        <View style={styles.targetBox}>
+                          {ex.target && (
+                            <Text style={[styles.targetText, { color: c.text }]}>
+                              🎯 Target: {ex.target.sets} × {formatRepRange(ex.target.repMin, ex.target.repMax)}
+                            </Text>
+                          )}
+                          {ex.notes ? (
+                            <Text style={[styles.targetNotes, { color: c.subtext }]}>📝 {ex.notes}</Text>
+                          ) : null}
+                        </View>
+                      )}
+
                       <Pressable
                         onPress={() => setRestEditingId(ex.id)}
                         style={[styles.restChip, { backgroundColor: c.inputBg }]}>
@@ -957,6 +979,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   infoText: { fontSize: 14, fontWeight: '800', fontStyle: 'italic' },
+  targetBox: { gap: 2 },
+  targetText: { fontSize: 13, fontWeight: '700' },
+  targetNotes: { fontSize: 13 },
   restChip: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   restChipText: { fontSize: 12, fontWeight: '600' },
 

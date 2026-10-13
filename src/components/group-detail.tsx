@@ -183,6 +183,10 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
             onInfo={setInfoFor}
             canDelete={openWorkout.user_id === myId}
             ownerLabel={openWorkout.user_id === myId ? 'You' : memberName(openWorkout)}
+            onRepeatStarted={() => {
+              setOpenWorkout(null);
+              onClose();
+            }}
             onDeleted={() => {
               setFeed((list) => (list ?? []).filter((w) => w.id !== openWorkout.id));
               setOpenWorkout(null);

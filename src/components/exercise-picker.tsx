@@ -4,22 +4,38 @@ import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, Vi
 import ExerciseThumb from '@/components/exercise-thumb';
 import { useRepzyColors } from '@/constants/repzy-colors';
 import { EXERCISE_LIBRARY, MUSCLE_GROUPS, searchExercises } from '@/lib/exercise-library';
+import { useFavorites } from '@/lib/favorites';
 
 type Picked = { name: string; gif: string | null };
 
 type Props = {
-  addedNames: string[];
-  onPick: (exercise: Picked) => void;
+  addedNames?: string[];
+  onPick?: (exercise: Picked) => void; // omit for browse-only mode (tapping opens the info page)
   onInfo: (name: string) => void;
   onCancel: () => void;
+  title?: string;
+  cancelLabel?: string;
 };
 
-export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }: Props) {
+const FAVOURITES = '★ Favourites';
+
+export default function ExercisePicker({
+  addedNames = [],
+  onPick,
+  onInfo,
+  onCancel,
+  title = 'Add exercise',
+  cancelLabel = 'Cancel',
+}: Props) {
   const c = useRepzyColors();
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('All');
+  const { isFavorite, toggleFavorite, favorites } = useFavorites();
 
-  const results = searchExercises(query, group);
+  const results =
+    group === FAVOURITES
+      ? searchExercises(query, 'All').filter((e) => favorites.has(e.name.toLowerCase()))
+      : searchExercises(query, group);
   const added = new Set(addedNames.map((n) => n.toLowerCase()));
 
   const trimmed = query.trim();
@@ -32,7 +48,7 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
       `Add "${trimmed}" as your own exercise? Use the same name every time so your PRs and history match up.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Create', onPress: () => onPick({ name: trimmed, gif: null }) },
+        { text: 'Create', onPress: () => onPick?.({ name: trimmed, gif: null }) },
       ],
     );
   }
@@ -41,9 +57,9 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
     <View style={styles.flex}>
       <View style={[styles.header, { borderBottomColor: c.border }]}>
         <Pressable onPress={onCancel} hitSlop={10}>
-          <Text style={[styles.headerSide, { color: c.subtext }]}>Cancel</Text>
+          <Text style={[styles.headerSide, { color: c.subtext }]}>{cancelLabel}</Text>
         </Pressable>
-        <Text style={[styles.headerTitle, { color: c.text }]}>Add exercise</Text>
+        <Text style={[styles.headerTitle, { color: c.text }]}>{title}</Text>
         <View style={styles.headerSide} />
       </View>
 
@@ -65,7 +81,7 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
         showsHorizontalScrollIndicator={false}
         style={styles.chipScroll}
         contentContainerStyle={styles.chipRow}>
-        {MUSCLE_GROUPS.map((g) => {
+        {[FAVOURITES, ...MUSCLE_GROUPS].map((g) => {
           const selected = g === group;
           return (
             <Pressable
@@ -93,7 +109,7 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
           return (
             <View style={styles.row}>
               <Pressable
-                onPress={() => onPick({ name: item.name, gif: item.gif })}
+                onPress={() => (onPick ? onPick({ name: item.name, gif: item.gif }) : onInfo(item.name))}
                 disabled={isAdded}
                 style={({ pressed }) => [styles.rowMain, { opacity: isAdded ? 0.45 : pressed ? 0.6 : 1 }]}>
                 <ExerciseThumb gif={item.gif} size={64} />
@@ -109,6 +125,14 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
                 </View>
               </Pressable>
               <Pressable
+                onPress={() => toggleFavorite(item.name)}
+                hitSlop={8}
+                accessibilityLabel={isFavorite(item.name) ? 'Remove from favourites' : 'Add to favourites'}>
+                <Text style={[styles.star, { color: isFavorite(item.name) ? c.gold : c.subtext }]}>
+                  {isFavorite(item.name) ? '★' : '☆'}
+                </Text>
+              </Pressable>
+              <Pressable
                 onPress={() => onInfo(item.name)}
                 hitSlop={10}
                 style={[styles.infoButton, { borderColor: c.border }]}>
@@ -118,11 +142,15 @@ export default function ExercisePicker({ addedNames, onPick, onInfo, onCancel }:
           );
         }}
         ListEmptyComponent={
-          <Text style={[styles.empty, { color: c.subtext }]}>No exercises found. Try a different word.</Text>
+          <Text style={[styles.empty, { color: c.subtext }]}>
+            {group === FAVOURITES
+              ? 'No favourites yet. Tap ☆ next to an exercise to save it here.'
+              : 'No exercises found. Try a different word.'}
+          </Text>
         }
         ListFooterComponent={
           <>
-            {canCreate ? (
+            {canCreate && onPick ? (
               <Pressable onPress={createCustom} style={[styles.createButton, { borderColor: c.accent }]}>
                 <Text style={{ color: c.accent, fontWeight: '700' }}>+ Create "{trimmed}" as a custom exercise</Text>
               </Pressable>
@@ -157,6 +185,7 @@ const styles = StyleSheet.create({
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
   name: { fontSize: 15, fontWeight: '700' },
   meta: { fontSize: 12, marginTop: 2 },
+  star: { fontSize: 24, paddingHorizontal: 2 },
   infoButton: {
     width: 30,
     height: 30,

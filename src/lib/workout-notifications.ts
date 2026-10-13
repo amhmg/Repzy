@@ -1,6 +1,8 @@
 import * as Notifications from '@/lib/notifications';
 import { Platform } from 'react-native';
 
+import { getSettings } from '@/lib/settings';
+
 // Two kinds of notification:
 // - "rest": fires when a rest timer ends, so the phone buzzes even when locked.
 // - "active": a quiet "Workout in progress" notification that stays on the lock screen
@@ -50,7 +52,7 @@ async function createChannels() {
 
 // Sets up channels and asks for permission once. Returns whether notifications are allowed.
 export function setupWorkoutNotifications(): Promise<boolean> {
-  if (Platform.OS === 'web') return Promise.resolve(false);
+  if (Platform.OS === 'web' || !getSettings().notifications) return Promise.resolve(false);
   if (!setupPromise) {
     setupPromise = (async () => {
       try {
@@ -71,6 +73,7 @@ export function setupWorkoutNotifications(): Promise<boolean> {
 
 export async function scheduleRestDone(endsAt: number, exerciseName: string) {
   await cancelRestDone();
+  if (!getSettings().notifications) return;
   if (!(await setupWorkoutNotifications())) return;
 
   const seconds = Math.round((endsAt - Date.now()) / 1000);
@@ -141,6 +144,10 @@ async function presentActiveWorkout(info: {
   doneSets: number;
   currentExercise: string | null;
 }) {
+  if (!getSettings().notifications) {
+    await dismissActiveNotifications();
+    return;
+  }
   if (!(await setupWorkoutNotifications())) return;
 
   const started = info.startedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });

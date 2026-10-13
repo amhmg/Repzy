@@ -1,11 +1,14 @@
-import * as Haptics from 'expo-haptics';
 import { useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useRepzyColors } from '@/constants/repzy-colors';
+import * as haptics from '@/lib/haptics';
 
-// Off, then 5 seconds up to 5 minutes in 5-second steps
-export const REST_VALUES = Array.from({ length: 61 }, (_, i) => i * 5);
+// Off, then 5-second steps up to 5 minutes, then 15-second steps up to 15 minutes
+export const REST_VALUES = [
+  ...Array.from({ length: 61 }, (_, i) => i * 5),
+  ...Array.from({ length: 40 }, (_, i) => 315 + i * 15),
+];
 
 export function formatRest(seconds: number) {
   if (seconds <= 0) return 'Off';
@@ -34,7 +37,7 @@ export default function RestPicker({ exerciseName, value, onSave, onClose }: Pro
     const next = Math.min(REST_VALUES.length - 1, Math.max(0, Math.round(offsetY / ITEM_HEIGHT)));
     if (next !== index) {
       setIndex(next);
-      Haptics.selectionAsync();
+      haptics.selection();
     }
   }
 

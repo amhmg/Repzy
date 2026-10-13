@@ -1,224 +1,419 @@
-import * as Notifications from '@/lib/notifications';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import WorkoutHistory from '@/components/workout-history';
-import WorkoutLogger from '@/components/workout-logger';
-import { useRepzyColors } from '@/constants/repzy-colors';
-import { useAuth } from '@/lib/auth';
-import { supabase } from '@/lib/supabase';
-import { clearDraft, draftDoneSets, loadDraft, WorkoutDraft } from '@/lib/workout-draft';
-import { clearWorkoutNotifications, RepzyNotificationType } from '@/lib/workout-notifications';
+import AppHeader from '@/components/app-header';
+import { WorkoutCard, WorkoutDetailModal } from '@/components/workout-history';
+import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
+import { fetchWorkoutHistory, WorkoutSummary } from '@/lib/history';
+import { firstName, useProfile } from '@/lib/profile';
+import { fetchTrainingSummary, RECORD_SHORT, trainingInsight, TrainingSummary } from '@/lib/progress';
+import { fetchRoutines, Routine, routineSetCount } from '@/lib/routines';
+import { useSettings } from '@/lib/settings';
+import { formatKg } from '@/lib/workout';
+import { draftDoneSets, draftFromRoutine } from '@/lib/workout-draft';
+import { useWorkoutSession } from '@/lib/workout-session';
 
-function formatElapsed(fromIso: string, now: number) {
-  const s = Math.max(0, Math.floor((now - new Date(fromIso).getTime()) / 1000));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = String(s % 60).padStart(2, '0');
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+const DAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+function greeting(date: Date) {
+  const h = date.getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
 }
 
 export default function HomeScreen() {
   const c = useRepzyColors();
-  const { session } = useAuth();
-  const userId = session?.user.id ?? null;
+  const { profile } = useProfile();
+  const { settings } = useSettings();
+  const session = useWorkoutSession();
 
-  const [username, setUsername] = useState<string | null>(null);
-  const [draft, setDraft] = useState<WorkoutDraft | null>(null);
-  const [logger, setLogger] = useState<{ key: number; draft: WorkoutDraft | null } | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const [savedMessage, setSavedMessage] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [summary, setSummary] = useState<TrainingSummary | null>(null);
+  const [summaryError, setSummaryError] = useState(false);
+  const [recent, setRecent] = useState<WorkoutSummary[] | null>(null);
+  const [routines, setRoutines] = useState<Routine[] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showStart, setShowStart] = useState(false);
+  const [openWorkout, setOpenWorkout] = useState<string | null>(null);
 
-  const lastResponse = Notifications.useLastNotificationResponse();
+  const load = useCallback(async () => {
+    const [s, r, rt] = await Promise.allSettled([
+      fetchTrainingSummary(),
+      fetchWorkoutHistory(undefined, { limit: 3 }),
+      fetchRoutines(),
+    ]);
+    if (s.status === 'fulfilled') {
+      setSummary(s.value);
+      setSummaryError(false);
+    } else setSummaryError(true);
+    setRecent(r.status === 'fulfilled' ? r.value.rows : []);
+    setRoutines(rt.status === 'fulfilled' ? rt.value : []);
+  }, []);
 
-  useEffect(() => {
-    if (!userId) return;
-    supabase
-      .from('profiles')
-      .select('username')
-      .eq('id', userId)
-      .single()
-      .then(({ data }) => setUsername(data?.username ?? null));
-  }, [userId]);
-
-  const refreshDraft = useCallback(async () => {
-    if (!userId) return null;
-    const d = await loadDraft(userId);
-    setDraft(d);
-    return d;
-  }, [userId]);
-
+  // Reload when the tab is shown and after every saved workout
   useFocusEffect(
     useCallback(() => {
-      refreshDraft();
-    }, [refreshDraft]),
+      load();
+    }, [load, session.savedVersion]),
   );
 
-  // Tick the "in progress" timer on the resume card
-  useEffect(() => {
-    if (!draft || logger) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [draft, logger]);
-
-  // Tapping the lock-screen workout notification (or the rest alert) reopens the workout
-  useEffect(() => {
-    if (!lastResponse || !userId) return;
-    const type = lastResponse.notification.request.content.data?.type as RepzyNotificationType | undefined;
-    if (type !== 'active' && type !== 'rest') return;
-    Notifications.clearLastNotificationResponse();
-    if (logger) return;
-    loadDraft(userId).then((d) => {
-      if (d) {
-        setDraft(d);
-        setLogger({ key: Date.now(), draft: d });
-      }
-    });
-  }, [lastResponse, userId, logger]);
-
-  function resume() {
-    if (!draft) return;
-    setSavedMessage(null);
-    setLogger({ key: Date.now(), draft });
+  async function refresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
   }
 
-  async function startNew() {
-    setSavedMessage(null);
-    const existing = await refreshDraft();
-    if (!existing) {
-      setLogger({ key: Date.now(), draft: null });
-      return;
-    }
-    Alert.alert('Workout in progress', 'You already have a workout going. Resume it or start a fresh one?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Resume', onPress: () => setLogger({ key: Date.now(), draft: existing }) },
-      {
-        text: 'Start new',
-        style: 'destructive',
-        onPress: () =>
-          Alert.alert('Discard the current workout?', 'Everything logged in it will be lost.', [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Discard',
-              style: 'destructive',
-              onPress: async () => {
-                if (userId) await clearDraft(userId);
-                await clearWorkoutNotifications();
-                setDraft(null);
-                setLogger({ key: Date.now(), draft: null });
-              },
-            },
-          ]),
-      },
-    ]);
-  }
-
-  const doneSets = draft ? draftDoneSets(draft) : 0;
-  const currentExercise = draft?.exercises[draft.exercises.length - 1]?.name;
+  const name = firstName(profile);
+  const draft = session.draft;
+  const insight = summary ? trainingInsight(summary) : null;
+  const latestPr = summary?.recent_prs[0];
+  const isNewUser = summary !== null && summary.total_workouts === 0;
+  const today = new Date();
+  const todayIndex = (today.getDay() + 6) % 7; // Monday = 0
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: c.background }]}>
-      <View style={styles.top}>
-        <Text style={[styles.logo, { color: c.accent }]}>Repzy</Text>
-        <Text style={{ color: c.subtext }}>@{username ?? '...'}</Text>
-      </View>
+    <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]} edges={['top']}>
+      <AppHeader
+        title={name ? `${greeting(today)}, ${name}` : greeting(today)}
+        subtitle={today.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
+      />
 
-      <View style={styles.middle}>
-        {savedMessage && (
-          <View style={[styles.savedBox, { backgroundColor: c.successSoft }]}>
-            <Text style={{ color: c.success, fontWeight: '700', textAlign: 'center' }}>{savedMessage}</Text>
-          </View>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}>
+        {session.lastSaved && (
+          <Pressable onPress={session.dismissSaved} style={[styles.savedBox, { backgroundColor: c.successSoft }]}>
+            <Text style={{ color: c.success, fontWeight: '700', textAlign: 'center' }}>
+              {session.lastSaved.prCount > 0
+                ? `“${session.lastSaved.title}” saved with ${session.lastSaved.prCount} new PR${session.lastSaved.prCount === 1 ? '' : 's'} 🏆`
+                : `“${session.lastSaved.title}” saved 💪`}
+            </Text>
+          </Pressable>
         )}
 
-        {draft && !logger ? (
+        {/* Start / resume */}
+        {draft ? (
           <Pressable
-            onPress={resume}
+            onPress={session.resume}
             style={({ pressed }) => [
               styles.resumeCard,
               { backgroundColor: c.accentSoft, borderColor: c.accent, opacity: pressed ? 0.85 : 1 },
             ]}>
-            <View style={styles.resumeTop}>
-              <Text style={[styles.resumeLabel, { color: c.accent }]}>● Workout in progress</Text>
-              <Text style={[styles.resumeTimer, { color: c.text }]}>{formatElapsed(draft.startedAt, now)}</Text>
-            </View>
+            <Text style={[styles.resumeLabel, { color: c.accent }]}>● Workout in progress</Text>
             <Text style={[styles.resumeTitle, { color: c.text }]} numberOfLines={1}>
               {draft.title || 'Workout'}
             </Text>
-            <Text style={{ color: c.subtext }} numberOfLines={1}>
-              {doneSets} set{doneSets === 1 ? '' : 's'} done
-              {currentExercise ? ` · ${currentExercise}` : ''}
+            <Text style={{ color: c.subtext }}>
+              {draftDoneSets(draft)} sets done · {draft.exercises.length} exercise
+              {draft.exercises.length === 1 ? '' : 's'}
             </Text>
-            <View style={[styles.resumeButton, { backgroundColor: c.accent }]}>
-              <Text style={styles.startText}>Resume workout</Text>
+            <View style={[styles.primaryButton, { backgroundColor: c.accent, marginTop: 10 }]}>
+              <Text style={styles.primaryText}>Resume workout</Text>
             </View>
           </Pressable>
         ) : (
           <Pressable
-            onPress={startNew}
-            style={({ pressed }) => [styles.startButton, { backgroundColor: c.accent, opacity: pressed ? 0.8 : 1 }]}>
+            onPress={() => setShowStart(true)}
+            style={({ pressed }) => [styles.primaryButton, styles.startButton, { backgroundColor: c.accent, opacity: pressed ? 0.85 : 1 }]}>
             <Text style={styles.startText}>Start workout</Text>
           </Pressable>
         )}
 
+        {isNewUser && !draft && (
+          <View style={[styles.card, { backgroundColor: c.card }]}>
+            <Text style={[styles.cardTitle, { color: c.text }]}>Welcome to Repzy 👋</Text>
+            <Text style={{ color: c.subtext, lineHeight: 20 }}>
+              Tap Start workout, add an exercise, and tick off each set as you go. Your stats and records will build up
+              here.
+            </Text>
+          </View>
+        )}
+
+        {/* This week */}
+        {summary && summary.total_workouts > 0 && (
+          <View style={[styles.card, { backgroundColor: c.card }]}>
+            <View style={styles.cardRow}>
+              <Text style={[styles.cardTitle, { color: c.text }]}>This week</Text>
+              {summary.week_streak > 0 && (
+                <Text style={[styles.streak, { color: c.accent }]}>🔥 {summary.week_streak}-week streak</Text>
+              )}
+            </View>
+            <View style={styles.weekStats}>
+              <Stat value={String(summary.week_workouts)} label={`workout${summary.week_workouts === 1 ? '' : 's'}`} colors={c} />
+              <Stat value={formatKg(summary.week_volume)} label="lifted" colors={c} />
+              <Stat value={String(summary.last_week_workouts)} label="last week" colors={c} />
+            </View>
+            <View style={styles.dots} accessibilityLabel={`Trained on ${summary.week_days.length} days this week`}>
+              {DAY_LETTERS.map((d, i) => {
+                const trained = summary.week_days.includes(i + 1);
+                const isToday = i === todayIndex;
+                return (
+                  <View key={i} style={styles.dotCol}>
+                    <View
+                      style={[
+                        styles.dot,
+                        {
+                          backgroundColor: trained ? c.accent : c.inputBg,
+                          borderColor: isToday ? c.accent : 'transparent',
+                        },
+                      ]}>
+                      {trained && <Text style={styles.dotTick}>✓</Text>}
+                    </View>
+                    <Text style={[styles.dotLabel, { color: isToday ? c.text : c.subtext }]}>{d}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {summaryError && (
+          <Text style={[styles.hint, { color: c.subtext }]}>
+            Stats will appear once the latest database update is installed.
+          </Text>
+        )}
+
+        {insight && (
+          <View style={[styles.insight, { borderColor: c.border }]}>
+            <Text style={{ color: c.text, lineHeight: 20 }}>{insight}</Text>
+          </View>
+        )}
+
+        {/* Latest PR */}
+        {latestPr && (
+          <View style={[styles.card, { backgroundColor: c.card }]}>
+            <Text style={[styles.smallLabel, { color: c.subtext }]}>Latest personal record</Text>
+            <Text style={[styles.prValue, { color: c.gold }]}>
+              🏆 {formatKg(latestPr.value)}
+              {latestPr.record_type === 'estimated_1rm' ? ' (estimated)' : ''}
+            </Text>
+            <Text style={[styles.prDetail, { color: c.text }]}>
+              {latestPr.exercise_name} · {RECORD_SHORT[latestPr.record_type]}
+              {latestPr.weight != null && latestPr.reps != null ? ` · ${latestPr.weight} × ${latestPr.reps}` : ''}
+            </Text>
+            <Text style={{ color: c.subtext, fontSize: 12 }}>
+              {new Date(latestPr.achieved_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+            </Text>
+          </View>
+        )}
+
+        {/* Routines shortcut */}
         <Pressable
-          onPress={() => setShowHistory(true)}
-          style={({ pressed }) => [styles.historyButton, { backgroundColor: c.card, opacity: pressed ? 0.7 : 1 }]}>
-          <Text style={[styles.historyText, { color: c.text }]}>📋 Workout history</Text>
+          onPress={() => router.navigate('/workouts')}
+          style={({ pressed }) => [styles.card, styles.cardRow, { backgroundColor: c.card, opacity: pressed ? 0.7 : 1 }]}>
+          <View style={styles.flex}>
+            <Text style={[styles.cardTitle, { color: c.text }]}>My routines</Text>
+            <Text style={{ color: c.subtext }} numberOfLines={1}>
+              {routines === null
+                ? 'Loading…'
+                : routines.length === 0
+                  ? 'Save a plan like Push Day or Legs to start it in one tap'
+                  : routines.map((r) => r.name).join(' · ')}
+            </Text>
+          </View>
+          <Text style={[styles.chevron, { color: c.subtext }]}>›</Text>
         </Pressable>
-      </View>
 
-      <Pressable onPress={() => supabase.auth.signOut()} style={styles.logout}>
-        <Text style={{ color: c.subtext }}>Log out</Text>
-      </Pressable>
+        {/* Recent workouts */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: c.text }]}>Recent workouts</Text>
+          {recent && recent.length > 0 && (
+            <Pressable onPress={() => router.navigate({ pathname: '/progress', params: { section: 'history' } })} hitSlop={10}>
+              <Text style={[styles.link, { color: c.accent }]}>See all</Text>
+            </Pressable>
+          )}
+        </View>
+        {recent === null ? (
+          <ActivityIndicator />
+        ) : recent.length === 0 ? (
+          <Text style={[styles.hint, { color: c.subtext }]}>Your finished workouts will appear here.</Text>
+        ) : (
+          recent.map((w) => <WorkoutCard key={w.id} workout={w} colors={c} onPress={() => setOpenWorkout(w.id)} />)
+        )}
+      </ScrollView>
 
-      {logger && userId && (
-        <WorkoutLogger
-          key={logger.key}
-          userId={userId}
-          draft={logger.draft}
-          onDiscard={() => {
-            setLogger(null);
-            setDraft(null);
+      {showStart && (
+        <StartSheet
+          colors={c}
+          routines={routines ?? []}
+          hasDraft={!!draft}
+          onClose={() => setShowStart(false)}
+          onEmpty={() => {
+            setShowStart(false);
+            session.startEmpty();
           }}
-          onMinimize={() => {
-            setLogger(null);
-            refreshDraft();
+          onRoutine={(r) => {
+            setShowStart(false);
+            session.startWith(draftFromRoutine(r, settings.defaultRestSeconds));
           }}
-          onSaved={({ prCount, title }) => {
-            setLogger(null);
-            setDraft(null);
-            setSavedMessage(
-              prCount > 0
-                ? `"${title}" saved with ${prCount} new PR${prCount === 1 ? '' : 's'} 🏆`
-                : `"${title}" saved 💪`,
-            );
+          onResume={() => {
+            setShowStart(false);
+            session.resume();
           }}
         />
       )}
 
-      {showHistory && <WorkoutHistory onClose={() => setShowHistory(false)} />}
+      {openWorkout && (
+        <WorkoutDetailModal
+          id={openWorkout}
+          onClose={() => setOpenWorkout(null)}
+          onDeleted={() => {
+            setOpenWorkout(null);
+            load();
+          }}
+        />
+      )}
+
     </SafeAreaView>
   );
 }
 
+function StartSheet({
+  colors: c,
+  routines,
+  hasDraft,
+  onClose,
+  onEmpty,
+  onRoutine,
+  onResume,
+}: {
+  colors: RepzyColors;
+  routines: Routine[];
+  hasDraft: boolean;
+  onClose: () => void;
+  onEmpty: () => void;
+  onRoutine: (r: Routine) => void;
+  onResume: () => void;
+}) {
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.sheetOverlay}>
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <View style={[styles.sheet, { backgroundColor: c.card }]}>
+          <Text style={[styles.sheetTitle, { color: c.text }]}>Start a workout</Text>
+
+          {hasDraft && (
+            <SheetOption icon="▶️" title="Resume workout in progress" colors={c} onPress={onResume} />
+          )}
+          <SheetOption icon="➕" title="Empty workout" detail="Add exercises as you go" colors={c} onPress={onEmpty} />
+
+          <Text style={[styles.sheetSection, { color: c.subtext }]}>From a routine</Text>
+          {routines.length === 0 ? (
+            <Pressable
+              onPress={() => {
+                onClose();
+                router.navigate('/workouts');
+              }}>
+              <Text style={[styles.hint, { color: c.subtext }]}>
+                No routines yet. <Text style={{ color: c.accent, fontWeight: '700' }}>Create one in Workouts</Text>
+              </Text>
+            </Pressable>
+          ) : (
+            <ScrollView style={styles.sheetList}>
+              {routines.map((r) => (
+                <SheetOption
+                  key={r.id}
+                  icon="📋"
+                  title={r.name}
+                  detail={`${r.exercises.length} exercises · ${routineSetCount(r)} sets`}
+                  colors={c}
+                  onPress={() => onRoutine(r)}
+                />
+              ))}
+            </ScrollView>
+          )}
+
+          <Pressable onPress={onClose} style={[styles.cancel, { backgroundColor: c.inputBg }]}>
+            <Text style={{ color: c.text, fontWeight: '700', fontSize: 16 }}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function SheetOption({
+  icon,
+  title,
+  detail,
+  colors: c,
+  onPress,
+}: {
+  icon: string;
+  title: string;
+  detail?: string;
+  colors: RepzyColors;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.option, { backgroundColor: c.inputBg, opacity: pressed ? 0.7 : 1 }]}>
+      <Text style={styles.optionIcon}>{icon}</Text>
+      <View style={styles.flex}>
+        <Text style={[styles.optionTitle, { color: c.text }]} numberOfLines={1}>
+          {title}
+        </Text>
+        {detail ? <Text style={{ color: c.subtext, fontSize: 13 }}>{detail}</Text> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function Stat({ value, label, colors }: { value: string; label: string; colors: RepzyColors }) {
+  return (
+    <View style={styles.stat}>
+      <Text style={[styles.statValue, { color: colors.text }]} numberOfLines={1}>
+        {value}
+      </Text>
+      <Text style={[styles.statLabel, { color: colors.subtext }]}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 24 },
-  top: { alignItems: 'center', marginTop: 32, gap: 4 },
-  logo: { fontSize: 40, fontWeight: '800', letterSpacing: -1 },
-  middle: { flex: 1, justifyContent: 'center', gap: 14 },
+  flex: { flex: 1 },
+  content: { paddingHorizontal: 16, paddingBottom: 120, gap: 12 },
   savedBox: { borderRadius: 12, padding: 14 },
-  startButton: { borderRadius: 16, paddingVertical: 20, alignItems: 'center' },
+  primaryButton: { borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  primaryText: { color: '#FFFFFF', fontSize: 17, fontWeight: '800' },
+  startButton: { paddingVertical: 20, borderRadius: 18 },
   startText: { color: '#FFFFFF', fontSize: 20, fontWeight: '800' },
   resumeCard: { borderRadius: 18, borderWidth: 1.5, padding: 16, gap: 4 },
-  resumeTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   resumeLabel: { fontSize: 13, fontWeight: '800' },
-  resumeTimer: { fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'] },
   resumeTitle: { fontSize: 20, fontWeight: '800' },
-  resumeButton: { borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 10 },
-  historyButton: { borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
-  historyText: { fontSize: 17, fontWeight: '700' },
-  logout: { alignItems: 'center', paddingVertical: 20 },
+  card: { borderRadius: 18, padding: 16, gap: 10 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  cardTitle: { fontSize: 17, fontWeight: '800' },
+  streak: { fontSize: 13, fontWeight: '800' },
+  weekStats: { flexDirection: 'row' },
+  stat: { flex: 1, gap: 2 },
+  statValue: { fontSize: 20, fontWeight: '800' },
+  statLabel: { fontSize: 12 },
+  dots: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  dotCol: { alignItems: 'center', gap: 4 },
+  dot: { width: 32, height: 32, borderRadius: 16, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  dotTick: { color: '#FFFFFF', fontWeight: '900', fontSize: 14 },
+  dotLabel: { fontSize: 12, fontWeight: '700' },
+  insight: { borderWidth: 1, borderRadius: 14, padding: 14 },
+  smallLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  prValue: { fontSize: 24, fontWeight: '900' },
+  prDetail: { fontSize: 15, fontWeight: '700' },
+  chevron: { fontSize: 26, fontWeight: '300' },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 },
+  sectionTitle: { fontSize: 19, fontWeight: '800' },
+  link: { fontSize: 15, fontWeight: '800' },
+  hint: { fontSize: 14, lineHeight: 20 },
+  sheetOverlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)' },
+  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 32, gap: 10 },
+  sheetTitle: { fontSize: 20, fontWeight: '800', textAlign: 'center', marginBottom: 4 },
+  sheetSection: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', marginTop: 8 },
+  sheetList: { maxHeight: 280 },
+  option: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 14, marginBottom: 8 },
+  optionIcon: { fontSize: 20 },
+  optionTitle: { fontSize: 16, fontWeight: '700' },
+  cancel: { borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 4 },
 });

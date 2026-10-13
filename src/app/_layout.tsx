@@ -6,6 +6,9 @@ import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import AuthScreen from '@/components/auth-screen';
 import { AuthProvider, useAuth } from '@/lib/auth';
+import { ProfileProvider } from '@/lib/profile';
+import { SettingsProvider } from '@/lib/settings';
+import { WorkoutSessionProvider } from '@/lib/workout-session';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -20,7 +23,19 @@ function RootContent() {
     );
   }
 
-  return session ? <AppTabs /> : <AuthScreen />;
+  if (!session) return <AuthScreen />;
+
+  const userId = session.user.id;
+  // key={userId}: switching accounts starts every provider fresh, so no data leaks between accounts
+  return (
+    <SettingsProvider key={userId} userId={userId}>
+      <ProfileProvider userId={userId}>
+        <WorkoutSessionProvider userId={userId}>
+          <AppTabs />
+        </WorkoutSessionProvider>
+      </ProfileProvider>
+    </SettingsProvider>
+  );
 }
 
 export default function RootLayout() {
