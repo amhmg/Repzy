@@ -233,18 +233,22 @@ function WorkoutCard({
 
 // ---------- Workout detail ----------
 
-function WorkoutDetailView({
+export function WorkoutDetailView({
   id,
   colors: c,
   onBack,
   onInfo,
   onDeleted,
+  canDelete = true,
+  ownerLabel,
 }: {
   id: string;
   colors: RepzyColors;
   onBack: () => void;
   onInfo: (name: string) => void;
-  onDeleted: () => void;
+  onDeleted?: () => void;
+  canDelete?: boolean; // false when viewing someone else's workout
+  ownerLabel?: string; // e.g. "@sam", shown under the title
 }) {
   const [detail, setDetail] = useState<WorkoutDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -269,7 +273,7 @@ function WorkoutDetailView({
             setDeleting(true);
             try {
               await deleteWorkout(id);
-              onDeleted();
+              onDeleted?.();
             } catch (e: any) {
               setDeleting(false);
               Alert.alert('Could not delete', e.message ?? 'Please try again.');
@@ -301,6 +305,7 @@ function WorkoutDetailView({
       ) : (
         <ScrollView contentContainerStyle={styles.detailContent}>
           <Text style={[styles.detailTitle, { color: c.text }]}>{detail.title || 'Workout'}</Text>
+          {ownerLabel ? <Text style={{ color: c.accent, fontWeight: '700' }}>{ownerLabel}</Text> : null}
           <Text style={{ color: c.subtext }}>
             {formatFullDate(date)} · {formatTime(date)} · {VISIBILITY_ICON[detail.visibility]}
           </Text>
@@ -344,6 +349,7 @@ function WorkoutDetailView({
             );
           })}
 
+          {canDelete && (
           <Pressable
             onPress={confirmDelete}
             disabled={deleting}
@@ -354,6 +360,7 @@ function WorkoutDetailView({
               <Text style={{ color: c.error, fontWeight: '700' }}>Delete workout</Text>
             )}
           </Pressable>
+          )}
         </ScrollView>
       )}
     </>

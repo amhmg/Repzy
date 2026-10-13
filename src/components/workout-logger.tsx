@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -23,6 +23,7 @@ import ExercisePicker from '@/components/exercise-picker';
 import ExerciseThumb from '@/components/exercise-thumb';
 import RestPicker, { formatRest } from '@/components/rest-picker';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
+import { fetchMyGroups, GroupSummary } from '@/lib/groups';
 import { supabase } from '@/lib/supabase';
 import {
   Bests,
@@ -34,37 +35,40 @@ import {
   RecordType,
   recordValues,
 } from '@/lib/workout';
+import {
+  clearDraft,
+  DraftExercise,
+  DraftPreviousSet,
+  DraftSet,
+  DraftVisibility,
+  saveDraft,
+  WorkoutDraft,
+} from '@/lib/workout-draft';
+import {
+  cancelRestDone,
+  clearWorkoutNotifications,
+  scheduleRestDone,
+  setupWorkoutNotifications,
+  showActiveWorkout,
+} from '@/lib/workout-notifications';
 
 // ---------- Types ----------
 
-type LoggedSet = {
-  id: string;
-  weight: string;
-  reps: string;
-  done: boolean;
-  prTypes: RecordType[];
-};
-
-type PreviousSet = { set_number: number; weight: number | null; reps: number | null };
-
-type LoggedExercise = {
-  id: string;
-  name: string;
-  gif: string | null;
-  restSeconds: number;
-  sets: LoggedSet[];
-  previous: PreviousSet[];
-  hasHistory: boolean;
-  historicBest: Bests; // best-ever from saved workouts, never changed during this workout
-  loading: boolean;
-};
+// The same shapes are saved to the phone as a draft (see lib/workout-draft.ts)
+type LoggedSet = DraftSet;
+type PreviousSet = DraftPreviousSet;
+type LoggedExercise = DraftExercise; // historicBest = best-ever from saved workouts, never changed during this workout
+type RestState = { endsAt: number; total: number; exerciseName: string };
 
 type Celebration = { id: string; exercise: string; lines: string[] };
 
 type Screen = 'log' | 'pick' | 'finish';
 
 type Props = {
-  onClose: () => void;
+  userId: string;
+  draft: WorkoutDraft | null; // resume this workout instead of starting a new one
+  onDiscard: () => void;
+  onMinimize: () => void;
   onSaved: (summary: { prCount: number; title: string }) => void;
 };
 
@@ -173,20 +177,24 @@ function PRCelebration({
 
 // ---------- Main screen ----------
 
-export default function WorkoutLogger({ onClose, onSaved }: Props) {
+export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, onSaved }: Props) {
   const c = useRepzyColors();
 
-  const [startedAt] = useState(() => new Date());
+  const [startedAt] = useState(() => (draft ? new Date(draft.startedAt) : new Date()));
   const [now, setNow] = useState(() => Date.now());
   const [screen, setScreen] = useState<Screen>('log');
-  const [exercises, setExercises] = useState<LoggedExercise[]>([]);
-  const [rest, setRest] = useState<{ endsAt: number; total: number } | null>(null);
+  const [exercises, setExercises] = useState<LoggedExercise[]>(() => draft?.exercises ?? []);
+  const [rest, setRest] = useState<RestState | null>(() =>
+    draft?.rest && draft.rest.endsAt > Date.now() ? draft.rest : null,
+  );
   const [celebration, setCelebration] = useState<Celebration | null>(null);
   const [restEditingId, setRestEditingId] = useState<string | null>(null);
   const [infoFor, setInfoFor] = useState<string | null>(null);
 
-  const [title, setTitle] = useState(() => defaultTitle(new Date()));
-  const [visibility, setVisibility] = useState<'private' | 'public'>('private');
+  const [title, setTitle] = useState(() => draft?.title ?? defaultTitle(new Date()));
+  const [visibility, setVisibility] = useState<DraftVisibility>(() => draft?.visibility ?? 'private');
+  const [groupId, setGroupId] = useState<string | null>(() => draft?.groupId ?? null);
+  const [groups, setGroups] = useState<GroupSummary[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -199,9 +207,56 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
   useEffect(() => {
     if (rest && now >= rest.endsAt) {
       setRest(null);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      cancelRestDone();
+      // Only buzz if we were watching; coming back to the app long after shouldn't vibrate
+      if (now - rest.endsAt < 3000) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     }
   }, [now, rest]);
+
+  // Ask for notification permission when the first workout starts, and
+  // re-arm the rest alarm if we're resuming mid-rest
+  useEffect(() => {
+    setupWorkoutNotifications();
+    if (rest) scheduleRestDone(rest.endsAt, rest.exerciseName);
+    // Exercises that were still loading their history when the app closed
+    for (const ex of exercises) {
+      if (ex.loading) loadExerciseHistory(ex.id, ex.name);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save the workout to the phone after every change (debounced)
+  const finished = useRef(false);
+
+  function buildDraft(): WorkoutDraft {
+    return {
+      version: 1,
+      startedAt: startedAt.toISOString(),
+      exercises,
+      rest,
+      title,
+      visibility,
+      groupId,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  useEffect(() => {
+    const draftNow: WorkoutDraft = {
+      version: 1,
+      startedAt: startedAt.toISOString(),
+      exercises,
+      rest,
+      title,
+      visibility,
+      groupId,
+      updatedAt: new Date().toISOString(),
+    };
+    const timer = setTimeout(() => {
+      if (!finished.current) saveDraft(userId, draftNow);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [userId, startedAt, exercises, rest, title, visibility, groupId]);
 
   // ---------- Stats ----------
 
@@ -212,6 +267,33 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
   );
   const prCount = doneSets.filter((s) => s.prTypes.length > 0).length;
   const elapsed = (now - startedAt.getTime()) / 1000;
+
+  const currentExercise =
+    [...exercises].reverse().find((ex) => ex.sets.some((s) => s.done))?.name ??
+    exercises[exercises.length - 1]?.name ??
+    null;
+
+  // Keep the lock-screen "Workout in progress" notification up to date
+  useEffect(() => {
+    if (finished.current) return;
+    showActiveWorkout({ startedAt, doneSets: doneSets.length, currentExercise });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doneSets.length, currentExercise]);
+
+  // Load groups for the "share to group" option once you reach the finish screen
+  useEffect(() => {
+    if (screen !== 'finish' || groups) return;
+    fetchMyGroups()
+      .then((list) => {
+        setGroups(list);
+        if (list.length > 0 && !list.some((g) => g.id === groupId)) setGroupId(list[0].id);
+        if (list.length === 0) {
+          setGroupId(null);
+          setVisibility((v) => (v === 'group' ? 'private' : v));
+        }
+      })
+      .catch(() => setGroups([]));
+  }, [screen, groups, groupId]);
 
   // ---------- Exercise actions ----------
 
@@ -238,7 +320,11 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
       },
     ]);
 
-    // Load saved bests and last session for this exercise
+    await loadExerciseHistory(id, name);
+  }
+
+  // Load saved bests and last session for an exercise in this workout
+  async function loadExerciseHistory(id: string, name: string) {
     const [recordsRes, previousRes] = await Promise.all([
       supabase.from('personal_records').select('record_type, value').eq('exercise_key', name.trim().toLowerCase()),
       supabase.rpc('get_last_performance', { exercise_name: name }),
@@ -347,27 +433,62 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
     }
 
     if (ex.restSeconds > 0) {
-      setRest({ endsAt: Date.now() + ex.restSeconds * 1000, total: ex.restSeconds });
+      const endsAt = Date.now() + ex.restSeconds * 1000;
+      setRest({ endsAt, total: ex.restSeconds, exerciseName: ex.name });
+      scheduleRestDone(endsAt, ex.name);
     }
   }
 
   // ---------- Rest timer ----------
 
   function adjustRest(seconds: number) {
-    setRest((r) => (r ? { endsAt: r.endsAt + seconds * 1000, total: Math.max(1, r.total + seconds) } : r));
+    if (!rest) return;
+    const next = { ...rest, endsAt: rest.endsAt + seconds * 1000, total: Math.max(1, rest.total + seconds) };
+    setRest(next);
+    scheduleRestDone(next.endsAt, next.exerciseName);
+  }
+
+  function skipRest() {
+    setRest(null);
+    cancelRestDone();
   }
 
   // ---------- Leaving and saving ----------
 
+  async function discard() {
+    finished.current = true;
+    await clearDraft(userId);
+    await clearWorkoutNotifications();
+    onDiscard();
+  }
+
+  async function minimize() {
+    await saveDraft(userId, buildDraft());
+    onMinimize();
+  }
+
   function confirmCancel() {
     if (exercises.length === 0) {
-      onClose();
+      discard();
       return;
     }
-    Alert.alert('Discard workout?', 'Everything you logged in this workout will be lost.', [
-      { text: 'Keep going', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: onClose },
-    ]);
+    Alert.alert(
+      'Leave workout?',
+      'Minimise keeps your workout going so you can come back to it. Discard deletes everything you logged.',
+      [
+        { text: 'Keep going', style: 'cancel' },
+        { text: 'Minimise', onPress: minimize },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert('Discard workout?', 'Everything you logged in this workout will be lost.', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Discard', style: 'destructive', onPress: discard },
+            ]),
+        },
+      ],
+    );
   }
 
   function handleBack() {
@@ -387,12 +508,18 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
   }
 
   async function saveWorkout() {
+    if (visibility === 'group' && !groupId) {
+      setSaveError('Choose which group to share this workout with.');
+      return;
+    }
+
     setSaving(true);
     setSaveError(null);
 
     const payload = {
       title: title.trim(),
       visibility,
+      group_id: visibility === 'group' ? groupId : null,
       started_at: startedAt.toISOString(),
       ended_at: new Date().toISOString(),
       exercises: exercises
@@ -414,6 +541,9 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
       return;
     }
 
+    finished.current = true;
+    await clearDraft(userId);
+    await clearWorkoutNotifications();
     onSaved({ prCount, title: payload.title || 'Workout' });
   }
 
@@ -438,7 +568,7 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
               <View style={[styles.header, { borderBottomColor: c.border }]}>
                 <Pressable onPress={handleBack} hitSlop={10}>
                   <Text style={[styles.headerSide, { color: c.subtext }]}>
-                    {screen === 'finish' ? 'Back' : 'Cancel'}
+                    {screen === 'finish' ? 'Back' : 'Leave'}
                   </Text>
                 </Pressable>
                 <View style={styles.headerCenter}>
@@ -486,13 +616,46 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
                       colors={c}
                     />
                     <VisibilityOption
+                      label="👥 Group"
+                      selected={visibility === 'group'}
+                      disabled={groups !== null && groups.length === 0}
+                      onPress={() => setVisibility('group')}
+                      colors={c}
+                    />
+                    <VisibilityOption
                       label="🌍 Public"
                       selected={visibility === 'public'}
                       onPress={() => setVisibility('public')}
                       colors={c}
                     />
-                    <VisibilityOption label="👥 Group (soon)" selected={false} disabled colors={c} />
                   </View>
+
+                  {groups !== null && groups.length === 0 && (
+                    <Text style={[styles.hint, { color: c.subtext }]}>
+                      Join or create a group in the Groups tab to share workouts with friends.
+                    </Text>
+                  )}
+
+                  {visibility === 'group' && groups && groups.length > 0 && (
+                    <View style={styles.groupChips}>
+                      {groups.map((g) => {
+                        const selected = g.id === groupId;
+                        return (
+                          <Pressable
+                            key={g.id}
+                            onPress={() => setGroupId(g.id)}
+                            style={[
+                              styles.groupChip,
+                              {
+                                backgroundColor: selected ? c.accent : c.inputBg,
+                              },
+                            ]}>
+                            <Text style={{ color: selected ? '#FFFFFF' : c.text, fontWeight: '700' }}>{g.name}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  )}
 
                   {saveError && <Text style={[styles.errorText, { color: c.error }]}>{saveError}</Text>}
 
@@ -676,7 +839,7 @@ export default function WorkoutLogger({ onClose, onSaved }: Props) {
                       <Text style={{ color: c.text, fontWeight: '600' }}>+15</Text>
                     </Pressable>
                     <Pressable
-                      onPress={() => setRest(null)}
+                      onPress={skipRest}
                       style={[styles.restButton, { backgroundColor: c.accent }]}>
                       <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>Skip</Text>
                     </Pressable>
@@ -892,6 +1055,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   errorText: { textAlign: 'center' },
+  hint: { fontSize: 13, textAlign: 'center' },
+  groupChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  groupChip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20 },
   saveButton: { borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
   saveText: { color: '#FFFFFF', fontSize: 17, fontWeight: '800' },
 });
