@@ -1,12 +1,12 @@
 -- Profile pictures.
--- profiles.avatar_url already exists. It holds "preset:<id>" (a built-in avatar)
--- or the public URL of a photo in the "avatars" storage bucket.
+-- profiles.avatar_url already exists. It holds the public URL of your photo in the
+-- "avatars" storage bucket, or null (initials are shown).
 -- Safe to run more than once.
 
 -- Keep the value sensible
 alter table public.profiles drop constraint if exists profiles_avatar_url_check;
 alter table public.profiles add constraint profiles_avatar_url_check
-  check (avatar_url is null or (char_length(avatar_url) <= 500 and (avatar_url like 'preset:%' or avatar_url like 'https://%')));
+  check (avatar_url is null or (char_length(avatar_url) <= 500 and avatar_url like 'https://%'));
 
 -- Public bucket for photos: max 2 MB, images only
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

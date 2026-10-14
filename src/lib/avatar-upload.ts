@@ -21,7 +21,7 @@ export async function uploadAvatarPhoto(userId: string, base64: string): Promise
   const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType: mimeType, upsert: false });
   if (error) {
     if (/bucket not found/i.test(error.message)) {
-      throw new Error('Photo uploads need the latest database update (avatars). Choose an avatar for now.');
+      throw new Error('Photo uploads need the latest database update (avatars). Please try again once it is installed.');
     }
     throw error;
   }

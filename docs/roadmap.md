@@ -31,7 +31,7 @@ Status key: ✅ built (app compiles and builds; database logic tested on a local
 | kg / lb | ⬜ | Store kg, convert on display and input |
 | Finish summary with comparison and notes | ✅ | "Stronger on X of Y exercises" by estimated 1RM |
 
-| Profile pictures (photo from library or one of 24 drawn avatars) | ✅ | Needs `20261016_avatars.sql` for photo uploads; shown in the header, settings and groups |
+| Profile picture from your photo library | ✅ | Needs `20261016_avatars.sql`; shown in the header, settings and groups; initials if none |
 
 ## Phase 3 — Progress tracking
 

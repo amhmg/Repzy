@@ -44,7 +44,7 @@ export function ProfileProvider({ userId, children }: { userId: string; children
     [userId, refresh],
   );
 
-  // value is "preset:<id>", a public image URL, or null for initials
+  // value is the public URL of your uploaded photo, or null for initials
   const updateAvatar = useCallback(
     async (value: string | null) => {
       const { error } = await supabase.from('profiles').update({ avatar_url: value }).eq('id', userId);
