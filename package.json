@@ -44,7 +44,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test:coach": "node --experimental-strip-types --import ./tests/ts-resolve.mjs --test tests/coach-engine.test.ts tests/coach-chat.test.ts"
   },
   "private": true
 }

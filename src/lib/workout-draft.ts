@@ -6,15 +6,25 @@ import { Bests, newId, RecordType } from '@/lib/workout';
 // The workout you're in the middle of, saved on the phone after every change
 // so closing the app, locking the phone or a crash never loses it.
 
+export type SetType = 'normal' | 'warmup' | 'drop' | 'failure' | 'amrap' | 'backoff';
+
 export type DraftSet = {
   id: string;
   weight: string;
   reps: string;
   done: boolean;
   prTypes: RecordType[];
+  type?: SetType; // missing = normal (drafts saved before set types existed)
+  rpe?: number | null;
 };
 
-export type DraftPreviousSet = { set_number: number; weight: number | null; reps: number | null };
+export type DraftPreviousSet = {
+  set_number: number;
+  weight: number | null;
+  reps: number | null;
+  set_type?: SetType;
+  rpe?: number | null;
+};
 
 export type DraftTarget = { sets: number; repMin: number | null; repMax: number | null };
 
@@ -25,6 +35,7 @@ export type DraftExercise = {
   restSeconds: number;
   target?: DraftTarget; // from a saved routine
   notes?: string | null; // routine notes for this exercise
+  exerciseNotes?: string; // your notes for this exercise in this workout
   sets: DraftSet[];
   previous: DraftPreviousSet[];
   hasHistory: boolean;
@@ -42,6 +53,7 @@ export type WorkoutDraft = {
   title: string;
   visibility: DraftVisibility;
   groupId: string | null;
+  notes?: string; // notes for the whole workout
   updatedAt: string;
 };
 

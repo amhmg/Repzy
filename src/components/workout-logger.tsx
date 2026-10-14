@@ -17,14 +17,17 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import ActionSheet, { SheetAction } from '@/components/action-sheet';
 import ExerciseInfo from '@/components/exercise-info';
 import ExercisePicker from '@/components/exercise-picker';
 import ExerciseThumb from '@/components/exercise-thumb';
 import RestPicker, { formatRest } from '@/components/rest-picker';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
+import { CoachExercise, epley, recommendNext, Recommendation } from '@/lib/coach/engine';
+import { findLibraryExercise } from '@/lib/exercise-library';
 import { fetchMyGroups, GroupSummary } from '@/lib/groups';
 import * as haptics from '@/lib/haptics';
-import { getSettings } from '@/lib/settings';
+import { getSettings, useSettings } from '@/lib/settings';
 import { supabase } from '@/lib/supabase';
 import {
   Bests,
@@ -43,6 +46,7 @@ import {
   DraftSet,
   DraftVisibility,
   saveDraft,
+  SetType,
   WorkoutDraft,
 } from '@/lib/workout-draft';
 import {
@@ -78,7 +82,31 @@ type Props = {
 const DEFAULT_REST = 90;
 
 function emptySet(): LoggedSet {
-  return { id: newId(), weight: '', reps: '', done: false, prTypes: [] };
+  return { id: newId(), weight: '', reps: '', done: false, prTypes: [], type: 'normal', rpe: null };
+}
+
+const SET_TYPES: { type: SetType; label: string; short: string; detail: string }[] = [
+  { type: 'normal', label: 'Working set', short: '', detail: 'A normal set' },
+  { type: 'warmup', label: 'Warm-up', short: 'W', detail: 'Never counts toward PRs or the coach' },
+  { type: 'drop', label: 'Drop set', short: 'D', detail: 'Straight after a set, lighter weight' },
+  { type: 'failure', label: 'Failure', short: 'F', detail: 'Taken to failure' },
+  { type: 'amrap', label: 'AMRAP', short: 'A', detail: 'As many reps as possible' },
+  { type: 'backoff', label: 'Back-off', short: 'B', detail: 'Lighter set after your top set' },
+];
+const RPE_VALUES = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+
+function setTypeOf(s: { type?: SetType }): SetType {
+  return s.type ?? 'normal';
+}
+
+// Best estimated 1RM of non-warm-up weighted sets (for "vs last time")
+function bestE1rm(sets: { weight: number | null; reps: number | null; type?: SetType }[]) {
+  let best = 0;
+  for (const s of sets) {
+    if (s.type === 'warmup' || !s.weight || !s.reps) continue;
+    best = Math.max(best, epley(s.weight, s.reps));
+  }
+  return best;
 }
 
 function formatClock(totalSeconds: number) {
@@ -114,7 +142,7 @@ function formatPrevious(p?: PreviousSet) {
 function markPRs(ex: LoggedExercise): LoggedExercise {
   const running: Bests = { ...ex.historicBest };
   const sets = ex.sets.map((s) => {
-    if (!s.done) return { ...s, prTypes: [] };
+    if (!s.done || setTypeOf(s) === 'warmup') return { ...s, prTypes: [] };
     const weight = parseNumber(s.weight);
     const reps = parseNumber(s.reps);
     if (!weight || weight <= 0 || !reps || reps <= 0) return { ...s, prTypes: [] };
@@ -205,6 +233,15 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
   const [groups, setGroups] = useState<GroupSummary[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [workoutNotes, setWorkoutNotes] = useState(() => draft?.notes ?? '');
+
+  const { settings } = useSettings();
+  const [setSheet, setSetSheet] = useState<{ exId: string; setId: string } | null>(null);
+  const [exerciseSheet, setExerciseSheet] = useState<string | null>(null);
+  const [replaceFor, setReplaceFor] = useState<string | null>(null);
+  const [notesOpen, setNotesOpen] = useState<Set<string>>(new Set());
+  const [coachHidden, setCoachHidden] = useState<Set<string>>(new Set());
+  const [undo, setUndo] = useState<{ exId: string; set: LoggedSet; index: number } | null>(null);
 
   // One clock for both the workout timer and the rest timer
   useEffect(() => {
@@ -245,6 +282,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
       title,
       visibility,
       groupId,
+      notes: workoutNotes,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -258,13 +296,21 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
       title,
       visibility,
       groupId,
+      notes: workoutNotes,
       updatedAt: new Date().toISOString(),
     };
     const timer = setTimeout(() => {
       if (!finished.current) saveDraft(userId, draftNow);
     }, 300);
     return () => clearTimeout(timer);
-  }, [userId, startedAt, exercises, rest, title, visibility, groupId]);
+  }, [userId, startedAt, exercises, rest, title, visibility, groupId, workoutNotes]);
+
+  // The undo bar disappears after 5 seconds
+  useEffect(() => {
+    if (!undo) return;
+    const t = setTimeout(() => setUndo(null), 5000);
+    return () => clearTimeout(t);
+  }, [undo]);
 
   // ---------- Stats ----------
 
@@ -362,6 +408,88 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
     });
   }
 
+  function moveExercise(exId: string, by: number) {
+    setExercises((list) => {
+      const i = list.findIndex((e) => e.id === exId);
+      const to = i + by;
+      if (i < 0 || to < 0 || to >= list.length) return list;
+      const next = [...list];
+      const [item] = next.splice(i, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  }
+
+  // Swap the exercise but keep the sets you've planned or entered
+  async function replaceExercise(exId: string, name: string, gif: string | null) {
+    setReplaceFor(null);
+    setScreen('log');
+    updateExercise(exId, (ex) => ({
+      ...ex,
+      name,
+      gif,
+      previous: [],
+      historicBest: {},
+      hasHistory: false,
+      loading: true,
+      sets: ex.sets.map((s) => ({ ...s, prTypes: [] })),
+    }));
+    await loadExerciseHistory(exId, name);
+  }
+
+  function toggleNotes(exId: string) {
+    setNotesOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(exId)) next.delete(exId);
+      else next.add(exId);
+      return next;
+    });
+  }
+
+  // The coach's target for this exercise, from your last session (and routine target)
+  function coachFor(ex: LoggedExercise): Recommendation | null {
+    if (!settings.coachSuggestions || ex.loading || coachHidden.has(ex.id)) return null;
+    if (ex.previous.length === 0) return null;
+    const lib = findLibraryExercise(ex.name);
+    const history: CoachExercise = {
+      name: ex.name,
+      group: lib?.group ?? null,
+      equipment: lib?.equipment ?? null,
+      sessions: [
+        {
+          date: new Date(Date.now() - 86400000).toISOString(),
+          sets: ex.previous
+            .filter((p) => p.reps != null && p.reps > 0)
+            .map((p) => ({ weight: p.weight, reps: p.reps as number, type: p.set_type })),
+        },
+      ],
+    };
+    const rec = recommendNext(history, {
+      target: ex.target ? { min: ex.target.repMin, max: ex.target.repMax, sets: ex.target.sets } : undefined,
+    });
+    return rec.action === 'start' ? null : rec;
+  }
+
+  // Fill the coach's numbers into the sets you haven't done yet (warm-ups left alone)
+  function applyCoach(ex: LoggedExercise, rec: Recommendation) {
+    haptics.selection();
+    updateExercise(ex.id, (e) => {
+      const sets = [...e.sets];
+      let r = 0;
+      for (let i = 0; i < sets.length && r < rec.reps.length; i++) {
+        const s = sets[i];
+        if (s.done || setTypeOf(s) === 'warmup') continue;
+        sets[i] = { ...s, weight: rec.weight != null ? String(rec.weight) : s.weight, reps: String(rec.reps[r]) };
+        r++;
+      }
+      while (r < rec.reps.length) {
+        sets.push({ ...emptySet(), weight: rec.weight != null ? String(rec.weight) : '', reps: String(rec.reps[r]) });
+        r++;
+      }
+      return { ...e, sets };
+    });
+  }
+
   function removeExercise(ex: LoggedExercise) {
     Alert.alert('Remove exercise?', `Remove ${ex.name} and its sets from this workout?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -386,7 +514,55 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
 
   function deleteSet(exId: string, setId: string) {
     haptics.impact(haptics.ImpactStyle.Medium);
-    updateExercise(exId, (ex) => markPRs({ ...ex, sets: ex.sets.filter((s) => s.id !== setId) }));
+    const ex = exercises.find((e) => e.id === exId);
+    const index = ex ? ex.sets.findIndex((s) => s.id === setId) : -1;
+    if (ex && index >= 0) setUndo({ exId, set: ex.sets[index], index });
+    updateExercise(exId, (e) => markPRs({ ...e, sets: e.sets.filter((s) => s.id !== setId) }));
+  }
+
+  function undoDelete() {
+    if (!undo) return;
+    const { exId, set, index } = undo;
+    setUndo(null);
+    updateExercise(exId, (e) => {
+      const sets = [...e.sets];
+      sets.splice(Math.min(index, sets.length), 0, set);
+      return markPRs({ ...e, sets });
+    });
+  }
+
+  function duplicateSet(exId: string, setId: string) {
+    updateExercise(exId, (e) => {
+      const i = e.sets.findIndex((s) => s.id === setId);
+      if (i < 0) return e;
+      const src = e.sets[i];
+      const copy: LoggedSet = { ...src, id: newId(), done: false, prTypes: [] };
+      const sets = [...e.sets];
+      sets.splice(i + 1, 0, copy);
+      return { ...e, sets };
+    });
+  }
+
+  function setSetType(exId: string, setId: string, type: SetType) {
+    updateExercise(exId, (e) => markPRs({ ...e, sets: e.sets.map((s) => (s.id === setId ? { ...s, type } : s)) }));
+  }
+
+  function setSetRpe(exId: string, setId: string, rpe: number | null) {
+    updateExercise(exId, (e) => ({ ...e, sets: e.sets.map((s) => (s.id === setId ? { ...s, rpe } : s)) }));
+  }
+
+  // Tap the Previous value to copy it into the set
+  function copyPrevious(exId: string, setId: string, prev?: PreviousSet) {
+    if (!prev || prev.reps == null) return;
+    haptics.selection();
+    updateExercise(exId, (e) => ({
+      ...e,
+      sets: e.sets.map((s) =>
+        s.id === setId && !s.done
+          ? { ...s, weight: prev.weight != null ? String(prev.weight) : '', reps: String(prev.reps) }
+          : s,
+      ),
+    }));
   }
 
   function editSet(exId: string, setId: string, field: 'weight' | 'reps', value: string) {
@@ -501,10 +677,15 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
   }
 
   function handleBack() {
-    if (infoFor) setInfoFor(null);
+    if (setSheet) setSetSheet(null);
+    else if (exerciseSheet) setExerciseSheet(null);
+    else if (infoFor) setInfoFor(null);
     else if (restEditingId) setRestEditingId(null);
     else if (screen === 'log') confirmCancel();
-    else setScreen('log');
+    else {
+      setReplaceFor(null);
+      setScreen('log');
+    }
   }
 
   function startFinish() {
@@ -531,13 +712,20 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
       group_id: visibility === 'group' ? groupId : null,
       started_at: startedAt.toISOString(),
       ended_at: new Date().toISOString(),
+      notes: workoutNotes.trim() || null,
       exercises: exercises
         .map((ex) => ({
           name: ex.name,
           rest_seconds: ex.restSeconds,
+          notes: ex.exerciseNotes?.trim() || null,
           sets: ex.sets
             .filter((s) => s.done)
-            .map((s) => ({ weight: parseNumber(s.weight), reps: Math.round(parseNumber(s.reps) ?? 0) })),
+            .map((s) => ({
+              weight: parseNumber(s.weight),
+              reps: Math.round(parseNumber(s.reps) ?? 0),
+              type: setTypeOf(s),
+              rpe: s.rpe ?? null,
+            })),
         }))
         .filter((ex) => ex.sets.length > 0),
     };
@@ -560,16 +748,38 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
 
   const restLeft = rest ? Math.max(0, (rest.endsAt - now) / 1000) : 0;
 
+  // This session vs your last session, per exercise (best estimated 1RM, warm-ups ignored)
+  const comparisons = exercises
+    .map((ex) => {
+      const done = ex.sets
+        .filter((s) => s.done)
+        .map((s) => ({ weight: parseNumber(s.weight), reps: parseNumber(s.reps), type: setTypeOf(s) }));
+      const now1 = bestE1rm(done);
+      const before = bestE1rm(ex.previous.map((p) => ({ weight: p.weight, reps: p.reps, type: p.set_type })));
+      if (!now1 || !before) return null;
+      return { name: ex.name, diff: Math.round((now1 - before) * 10) / 10 };
+    })
+    .filter((x): x is { name: string; diff: number } => x !== null);
+  const improved = comparisons.filter((x) => x.diff > 0).length;
+
+  const sheetExercise = exercises.find((e) => e.id === exerciseSheet);
+  const sheetSetEx = setSheet ? exercises.find((e) => e.id === setSheet.exId) : undefined;
+  const sheetSet = sheetSetEx?.sets.find((s) => s.id === setSheet?.setId);
+
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={handleBack}>
       <GestureHandlerRootView style={styles.flex}>
         <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
           {screen === 'pick' ? (
             <ExercisePicker
+              title={replaceFor ? 'Replace exercise' : 'Add exercise'}
               addedNames={exercises.map((ex) => ex.name)}
-              onPick={({ name, gif }) => addExercise(name, gif)}
+              onPick={({ name, gif }) => (replaceFor ? replaceExercise(replaceFor, name, gif) : addExercise(name, gif))}
               onInfo={setInfoFor}
-              onCancel={() => setScreen('log')}
+              onCancel={() => {
+                setReplaceFor(null);
+                setScreen('log');
+              }}
             />
           ) : (
             <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -607,6 +817,32 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                     <Summary label="PRs" value={prCount > 0 ? `🏆 ${prCount}` : '0'} colors={c} />
                   </View>
 
+                  {comparisons.length > 0 && (
+                    <View style={[styles.compareCard, { backgroundColor: c.card }]}>
+                      <Text style={[styles.compareTitle, { color: c.text }]}>
+                        Stronger on {improved} of {comparisons.length} exercise{comparisons.length === 1 ? '' : 's'} vs last time
+                      </Text>
+                      {comparisons.slice(0, 8).map((cmp) => (
+                        <View key={cmp.name} style={styles.compareRow}>
+                          <Text style={[styles.compareName, { color: c.text }]} numberOfLines={1}>
+                            {cmp.name}
+                          </Text>
+                          <Text
+                            style={{
+                              color: cmp.diff > 0 ? c.success : cmp.diff < 0 ? c.error : c.subtext,
+                              fontWeight: '800',
+                            }}>
+                            {cmp.diff > 0 ? '▲ +' : cmp.diff < 0 ? '▼ ' : '= '}
+                            {cmp.diff === 0 ? 'same' : formatKg(cmp.diff)}
+                          </Text>
+                        </View>
+                      ))}
+                      <Text style={[styles.hint, { color: c.subtext, textAlign: 'left' }]}>
+                        Compared by best estimated 1RM per exercise. Warm-ups don&apos;t count.
+                      </Text>
+                    </View>
+                  )}
+
                   <Text style={[styles.label, { color: c.subtext }]}>Title</Text>
                   <TextInput
                     style={[styles.textInput, { backgroundColor: c.inputBg, color: c.text }]}
@@ -614,6 +850,17 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                     onChangeText={setTitle}
                     placeholder="Workout title"
                     placeholderTextColor={c.subtext}
+                  />
+
+                  <Text style={[styles.label, { color: c.subtext }]}>Notes</Text>
+                  <TextInput
+                    style={[styles.textInput, styles.notesInput, { backgroundColor: c.inputBg, color: c.text }]}
+                    value={workoutNotes}
+                    onChangeText={setWorkoutNotes}
+                    placeholder="How did it feel? (optional)"
+                    placeholderTextColor={c.subtext}
+                    multiline
+                    maxLength={2000}
                   />
 
                   <Text style={[styles.label, { color: c.subtext }]}>Who can see this?</Text>
@@ -707,10 +954,54 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                           style={[styles.infoButton, { borderColor: c.border }]}>
                           <Text style={[styles.infoText, { color: c.subtext }]}>i</Text>
                         </Pressable>
-                        <Pressable onPress={() => removeExercise(ex)} hitSlop={10}>
-                          <Text style={[styles.removeText, { color: c.subtext }]}>✕</Text>
+                        <Pressable
+                          onPress={() => setExerciseSheet(ex.id)}
+                          hitSlop={10}
+                          accessibilityLabel={`Options for ${ex.name}`}>
+                          <Text style={[styles.removeText, { color: c.subtext }]}>•••</Text>
                         </Pressable>
                       </View>
+
+                      {(() => {
+                        const rec = coachFor(ex);
+                        if (!rec) return null;
+                        return (
+                          <View style={[styles.coachBox, { backgroundColor: c.accentSoft }]}>
+                            <View style={styles.flex}>
+                              <Text style={[styles.coachHeadline, { color: c.text }]}>🧠 Coach: {rec.headline}</Text>
+                              <Text style={[styles.coachReason, { color: c.subtext }]} numberOfLines={3}>
+                                {rec.reason}
+                              </Text>
+                            </View>
+                            <View style={styles.coachButtons}>
+                              <Pressable
+                                onPress={() => applyCoach(ex, rec)}
+                                style={[styles.coachUse, { backgroundColor: c.accent }]}
+                                accessibilityLabel="Use the coach's numbers">
+                                <Text style={styles.coachUseText}>Use</Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={() => setCoachHidden((prev) => new Set(prev).add(ex.id))}
+                                hitSlop={8}
+                                accessibilityLabel="Hide coach suggestion">
+                                <Text style={{ color: c.subtext, fontSize: 16 }}>✕</Text>
+                              </Pressable>
+                            </View>
+                          </View>
+                        );
+                      })()}
+
+                      {(notesOpen.has(ex.id) || !!ex.exerciseNotes) && (
+                        <TextInput
+                          style={[styles.exerciseNotes, { backgroundColor: c.inputBg, color: c.text }]}
+                          value={ex.exerciseNotes ?? ''}
+                          onChangeText={(t) => updateExercise(ex.id, (e) => ({ ...e, exerciseNotes: t }))}
+                          placeholder="Note for this exercise, e.g. seat 4, felt easy"
+                          placeholderTextColor={c.subtext}
+                          maxLength={500}
+                          multiline
+                        />
+                      )}
 
                       {(ex.target || ex.notes) && (
                         <View style={styles.targetBox}>
@@ -743,6 +1034,10 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
 
                       {ex.sets.map((set, i) => {
                         const prev = ex.previous[i];
+                        const type = setTypeOf(set);
+                        const short = SET_TYPES.find((t) => t.type === type)?.short ?? '';
+                        // working sets are numbered 1, 2, 3…; other types show their letter
+                        const workingNumber = ex.sets.slice(0, i + 1).filter((s) => setTypeOf(s) === 'normal').length;
                         return (
                           <ReanimatedSwipeable
                             key={set.id}
@@ -758,15 +1053,39 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                             )}>
                             <View
                               style={[styles.setRow, { backgroundColor: set.done ? c.successSoft : c.card }]}>
-                              <View style={styles.colSet}>
+                              <Pressable
+                                onPress={() => setSetSheet({ exId: ex.id, setId: set.id })}
+                                hitSlop={6}
+                                accessibilityLabel={`Set ${i + 1} options`}
+                                style={styles.colSet}>
                                 <Text
-                                  style={[styles.setNumber, { color: set.prTypes.length ? c.gold : c.text }]}>
-                                  {set.prTypes.length ? '🏆' : i + 1}
+                                  style={[
+                                    styles.setNumber,
+                                    {
+                                      color: set.prTypes.length
+                                        ? c.gold
+                                        : type === 'warmup'
+                                          ? c.gold
+                                          : type !== 'normal'
+                                            ? c.accent
+                                            : c.text,
+                                    },
+                                  ]}>
+                                  {set.prTypes.length ? '🏆' : short || workingNumber}
                                 </Text>
-                              </View>
-                              <Text style={[styles.colPrev, styles.prevText, { color: c.subtext }]}>
-                                {formatPrevious(prev)}
-                              </Text>
+                                {set.rpe != null && (
+                                  <Text style={[styles.rpeTag, { color: c.subtext }]}>@{set.rpe}</Text>
+                                )}
+                              </Pressable>
+                              <Pressable
+                                onPress={() => copyPrevious(ex.id, set.id, prev)}
+                                disabled={set.done || !prev}
+                                style={styles.colPrev}
+                                accessibilityLabel="Copy previous values">
+                                <Text style={[styles.prevText, { color: c.subtext, textAlign: 'center' }]}>
+                                  {formatPrevious(prev)}
+                                </Text>
+                              </Pressable>
                               <TextInput
                                 style={[
                                   styles.colInput,
@@ -825,10 +1144,19 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
 
                   {exercises.length > 0 && (
                     <Text style={[styles.tip, { color: c.subtext }]}>
-                      Tip: swipe a set left to delete it. Tap the rest chip to set the rest time.
+                      Tips: tap a set number for warm-up, drop set or RPE. Tap Previous to copy it. Swipe left to delete.
                     </Text>
                   )}
                 </ScrollView>
+              )}
+
+              {undo && screen === 'log' && (
+                <View style={[styles.undoBar, { backgroundColor: c.text, bottom: rest ? 120 : 20 }]}>
+                  <Text style={{ color: c.background, fontWeight: '600' }}>Set deleted</Text>
+                  <Pressable onPress={undoDelete} hitSlop={10}>
+                    <Text style={{ color: c.accent, fontWeight: '900' }}>UNDO</Text>
+                  </Pressable>
+                </View>
               )}
 
               {/* Rest timer bar */}
@@ -881,6 +1209,76 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
           )}
 
           {infoFor && <ExerciseInfo name={infoFor} onClose={() => setInfoFor(null)} />}
+
+          {sheetSetEx && sheetSet && setSheet && (
+            <ActionSheet
+              title={`${sheetSetEx.name} · set ${sheetSetEx.sets.findIndex((s) => s.id === sheetSet.id) + 1}`}
+              onClose={() => setSetSheet(null)}
+              actions={[
+                ...SET_TYPES.map<SheetAction>((t) => ({
+                  label: `${t.short ? t.short + ' · ' : ''}${t.label}`,
+                  detail: t.detail,
+                  selected: setTypeOf(sheetSet) === t.type,
+                  onPress: () => setSetType(setSheet.exId, setSheet.setId, t.type),
+                })),
+                { label: 'Duplicate set', onPress: () => duplicateSet(setSheet.exId, setSheet.setId) },
+                { label: 'Delete set', destructive: true, onPress: () => deleteSet(setSheet.exId, setSheet.setId) },
+              ]}>
+              <Text style={[styles.rpeLabel, { color: c.subtext }]}>RPE (how hard, 10 = no reps left)</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rpeRow}>
+                {[null, ...RPE_VALUES].map((v) => {
+                  const selected = (sheetSet.rpe ?? null) === v;
+                  return (
+                    <Pressable
+                      key={String(v)}
+                      onPress={() => setSetRpe(setSheet.exId, setSheet.setId, v)}
+                      style={[styles.rpeChip, { backgroundColor: selected ? c.accent : c.inputBg }]}>
+                      <Text style={{ color: selected ? '#FFFFFF' : c.text, fontWeight: '700' }}>{v ?? '–'}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </ActionSheet>
+          )}
+
+          {sheetExercise && (
+            <ActionSheet
+              title={sheetExercise.name}
+              onClose={() => setExerciseSheet(null)}
+              actions={[
+                {
+                  label: 'Move up',
+                  disabled: exercises[0]?.id === sheetExercise.id,
+                  onPress: () => moveExercise(sheetExercise.id, -1),
+                },
+                {
+                  label: 'Move down',
+                  disabled: exercises[exercises.length - 1]?.id === sheetExercise.id,
+                  onPress: () => moveExercise(sheetExercise.id, 1),
+                },
+                {
+                  label: 'Replace exercise',
+                  detail: 'Keeps your sets',
+                  onPress: () => {
+                    setReplaceFor(sheetExercise.id);
+                    setScreen('pick');
+                  },
+                },
+                {
+                  label: notesOpen.has(sheetExercise.id) || sheetExercise.exerciseNotes ? 'Hide note' : 'Add note',
+                  onPress: () => toggleNotes(sheetExercise.id),
+                },
+                ...(coachHidden.has(sheetExercise.id)
+                  ? [{ label: 'Show coach suggestion', onPress: () => setCoachHidden((prev) => {
+                      const next = new Set(prev);
+                      next.delete(sheetExercise.id);
+                      return next;
+                    }) }]
+                  : []),
+                { label: 'Remove exercise', destructive: true, onPress: () => removeExercise(sheetExercise) },
+              ]}
+            />
+          )}
 
           {celebration && (
             <PRCelebration celebration={celebration} colors={c} onDone={() => setCelebration(null)} />
@@ -979,6 +1377,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   infoText: { fontSize: 14, fontWeight: '800', fontStyle: 'italic' },
+  coachBox: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, padding: 10 },
+  coachHeadline: { fontSize: 14, fontWeight: '800' },
+  coachReason: { fontSize: 12, marginTop: 2, lineHeight: 16 },
+  coachButtons: { alignItems: 'center', gap: 8 },
+  coachUse: { borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  coachUseText: { color: '#FFFFFF', fontWeight: '800' },
+  exerciseNotes: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  rpeTag: { fontSize: 10, fontWeight: '700' },
+  rpeLabel: { fontSize: 12, fontWeight: '700', marginLeft: 4 },
+  rpeRow: { gap: 8, paddingVertical: 6, paddingHorizontal: 2 },
+  rpeChip: { minWidth: 44, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  undoBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  compareCard: { borderRadius: 16, padding: 14, gap: 6 },
+  compareTitle: { fontSize: 15, fontWeight: '800', marginBottom: 2 },
+  compareRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  compareName: { flex: 1, fontSize: 14 },
+  notesInput: { minHeight: 70, textAlignVertical: 'top' },
   targetBox: { gap: 2 },
   targetText: { fontSize: 13, fontWeight: '700' },
   targetNotes: { fontSize: 13 },

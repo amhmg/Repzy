@@ -7,12 +7,14 @@ export type Settings = {
   defaultRestSeconds: number; // used for exercises added without a routine rest time
   haptics: boolean; // vibration feedback
   notifications: boolean; // rest-over alerts and the lock-screen "workout in progress" notification
+  coachSuggestions: boolean; // show the coach's target for each exercise while logging
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   defaultRestSeconds: 90,
   haptics: true,
   notifications: true,
+  coachSuggestions: true,
 };
 
 // A plain copy for code outside React (haptics and notification helpers)

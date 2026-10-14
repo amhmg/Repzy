@@ -21,6 +21,20 @@ export const EXERCISE_LIBRARY = data as LibraryExercise[];
 
 export const MUSCLE_GROUPS = ['All', 'Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Core', 'Cardio'];
 
+// Body-diagram regions for each muscle group, and which side of the body shows them best
+export const GROUP_BODY: Record<string, { slugs: string[]; side: 'front' | 'back' | 'both' }> = {
+  All: {
+    slugs: ['chest', 'deltoids', 'biceps', 'triceps', 'abs', 'quadriceps', 'upper-back', 'hamstring', 'gluteal', 'calves'],
+    side: 'front',
+  },
+  Chest: { slugs: ['chest'], side: 'front' },
+  Back: { slugs: ['upper-back', 'lower-back', 'trapezius'], side: 'back' },
+  Shoulders: { slugs: ['deltoids'], side: 'front' },
+  Arms: { slugs: ['biceps', 'triceps', 'forearm'], side: 'front' },
+  Legs: { slugs: ['quadriceps', 'hamstring', 'gluteal', 'calves', 'adductors'], side: 'front' },
+  Core: { slugs: ['abs', 'obliques'], side: 'front' },
+};
+
 const BY_NAME = new Map(EXERCISE_LIBRARY.map((e) => [e.name.toLowerCase(), e]));
 
 export function findLibraryExercise(name: string): LibraryExercise | null {

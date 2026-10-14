@@ -8,10 +8,11 @@ type Props = {
   primary: string[];
   secondary: string[];
   height?: number;
+  side?: 'both' | 'front' | 'back';
 };
 
 // Small front + back body with the worked muscles highlighted
-function MuscleMap({ primary, secondary, height = 60 }: Props) {
+function MuscleMap({ primary, secondary, height = 60, side = 'both' }: Props) {
   const c = useRepzyColors();
   const dark = useColorScheme() === 'dark';
 
@@ -30,8 +31,8 @@ function MuscleMap({ primary, secondary, height = 60 }: Props) {
 
   return (
     <View style={styles.row}>
-      <Body {...bodyProps} side="front" />
-      <Body {...bodyProps} side="back" />
+      {side !== 'back' && <Body {...bodyProps} side="front" />}
+      {side !== 'front' && <Body {...bodyProps} side="back" />}
     </View>
   );
 }

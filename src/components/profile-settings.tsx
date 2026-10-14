@@ -125,6 +125,17 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
               }
             />
             <Row
+              label="Coach suggestions"
+              detail="Show next-session targets while you log"
+              colors={c}
+              right={
+                <Switch
+                  value={settings.coachSuggestions}
+                  onValueChange={(v) => updateSettings({ coachSuggestions: v })}
+                />
+              }
+            />
+            <Row
               label="Lock-screen notifications"
               detail="Rest-over alerts and “Workout in progress”"
               colors={c}

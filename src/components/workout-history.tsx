@@ -27,6 +27,7 @@ import {
   formatFullDate,
   formatMonth,
   formatSet,
+  SET_TYPE_LABEL,
   formatTime,
   workoutDate,
   WorkoutDetail,
@@ -347,6 +348,10 @@ export function WorkoutDetailView({
             {formatFullDate(date)} · {formatTime(date)} · {VISIBILITY_ICON[detail.visibility]}
           </Text>
 
+          {detail.notes ? (
+            <Text style={{ color: c.text, fontStyle: 'italic' }}>📝 {detail.notes}</Text>
+          ) : null}
+
           <View style={[styles.summary, { backgroundColor: c.card }]}>
             <Stat label="Time" value={formatDuration(detail.duration_minutes)} colors={c} />
             <Stat label="Sets" value={String(allSets.length)} colors={c} />
@@ -355,7 +360,7 @@ export function WorkoutDetailView({
 
           {detail.exercises.map((ex) => {
             const best = ex.sets
-              .filter((s) => s.weight != null && s.weight > 0)
+              .filter((s) => s.weight != null && s.weight > 0 && s.set_type !== 'warmup')
               .reduce((m, s) => Math.max(m, estimateOneRepMax(s.weight as number, s.reps)), 0);
             return (
               <View key={ex.id} style={[styles.exerciseCard, { backgroundColor: c.card }]}>
@@ -376,12 +381,23 @@ export function WorkoutDetailView({
                     <Text style={[styles.infoText, { color: c.subtext }]}>i</Text>
                   </Pressable>
                 </View>
-                {ex.sets.map((s) => (
-                  <View key={s.set_number} style={styles.setRow}>
-                    <Text style={[styles.setNumber, { color: c.subtext }]}>{s.set_number}</Text>
-                    <Text style={[styles.setText, { color: c.text }]}>{formatSet(s)}</Text>
-                  </View>
-                ))}
+                {ex.notes ? (
+                  <Text style={{ color: c.subtext, fontStyle: 'italic' }}>📝 {ex.notes}</Text>
+                ) : null}
+                {ex.sets.map((s) => {
+                  const typeLabel = s.set_type ? SET_TYPE_LABEL[s.set_type] : undefined;
+                  return (
+                    <View key={s.set_number} style={styles.setRow}>
+                      <Text style={[styles.setNumber, { color: typeLabel ? c.accent : c.subtext }]}>
+                        {typeLabel ? typeLabel[0] : s.set_number}
+                      </Text>
+                      <Text style={[styles.setText, { color: c.text }]}>
+                        {formatSet(s)}
+                        {typeLabel ? <Text style={{ color: c.subtext }}>  · {typeLabel}</Text> : null}
+                      </Text>
+                    </View>
+                  );
+                })}
               </View>
             );
           })}

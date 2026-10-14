@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import ExerciseThumb from '@/components/exercise-thumb';
+import MuscleMap from '@/components/muscle-map';
 import { useRepzyColors } from '@/constants/repzy-colors';
-import { EXERCISE_LIBRARY, MUSCLE_GROUPS, searchExercises } from '@/lib/exercise-library';
+import { EXERCISE_LIBRARY, GROUP_BODY, MUSCLE_GROUPS, searchExercises } from '@/lib/exercise-library';
 import { useFavorites } from '@/lib/favorites';
 
 type Picked = { name: string; gif: string | null };
@@ -83,12 +84,32 @@ export default function ExercisePicker({
         contentContainerStyle={styles.chipRow}>
         {[FAVOURITES, ...MUSCLE_GROUPS].map((g) => {
           const selected = g === group;
+          const body = GROUP_BODY[g];
+          const label = g === FAVOURITES ? 'Favourites' : g;
           return (
             <Pressable
               key={g}
               onPress={() => setGroup(g)}
-              style={[styles.chip, { backgroundColor: selected ? c.accent : c.inputBg }]}>
-              <Text style={{ color: selected ? '#FFFFFF' : c.text, fontWeight: '600' }}>{g}</Text>
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              accessibilityLabel={`Show ${label}`}
+              style={styles.chip}>
+              <View
+                style={[
+                  styles.chipPicture,
+                  { backgroundColor: c.inputBg, borderColor: selected ? c.accent : 'transparent' },
+                ]}>
+                {body ? (
+                  <MuscleMap primary={body.slugs} secondary={[]} height={46} side={body.side} />
+                ) : (
+                  <Text style={styles.chipEmoji}>{g === FAVOURITES ? '★' : '❤️'}</Text>
+                )}
+              </View>
+              <Text
+                style={[styles.chipLabel, { color: selected ? c.accent : c.text, fontWeight: selected ? '800' : '600' }]}
+                numberOfLines={1}>
+                {label}
+              </Text>
             </Pressable>
           );
         })}
@@ -178,8 +199,19 @@ const styles = StyleSheet.create({
   searchWrap: { paddingHorizontal: 16, paddingTop: 12 },
   search: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
   chipScroll: { flexGrow: 0 },
-  chipRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  chipRow: { paddingHorizontal: 16, paddingVertical: 10, gap: 10, alignItems: 'flex-start' },
+  chip: { width: 64, alignItems: 'center', gap: 4 },
+  chipPicture: {
+    width: 60,
+    height: 56,
+    borderRadius: 14,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  chipEmoji: { fontSize: 24, color: '#F5B301' },
+  chipLabel: { fontSize: 11 },
   list: { paddingHorizontal: 16, paddingBottom: 40 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },

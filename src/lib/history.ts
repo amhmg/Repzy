@@ -16,7 +16,13 @@ export type WorkoutSummary = {
   pr_count: number;
 };
 
-export type HistorySet = { set_number: number; weight: number | null; reps: number };
+export type HistorySet = {
+  set_number: number;
+  weight: number | null;
+  reps: number;
+  set_type?: string | null;
+  rpe?: number | null;
+};
 
 export type WorkoutDetail = {
   id: string;
@@ -25,7 +31,15 @@ export type WorkoutDetail = {
   started_at: string | null;
   created_at: string;
   duration_minutes: number | null;
-  exercises: { id: string; name: string; order_index: number; rest_seconds: number | null; sets: HistorySet[] }[];
+  notes?: string | null;
+  exercises: {
+    id: string;
+    name: string;
+    order_index: number;
+    rest_seconds: number | null;
+    notes?: string | null;
+    sets: HistorySet[];
+  }[];
 };
 
 export type ExerciseSession = {
@@ -62,14 +76,18 @@ export async function fetchWorkoutHistory(before?: string, options?: { search?: 
   return { rows, hasMore: rows.length === limit };
 }
 
+const DETAIL_SELECT =
+  'id, title, notes, visibility, started_at, created_at, duration_minutes, exercises(id, name, order_index, rest_seconds, notes, sets(set_number, weight, reps, set_type, rpe))';
+// Used if the set-types update hasn't been installed in the database yet
+const DETAIL_SELECT_OLD =
+  'id, title, notes, visibility, started_at, created_at, duration_minutes, exercises(id, name, order_index, rest_seconds, sets(set_number, weight, reps))';
+
 export async function fetchWorkoutDetail(id: string): Promise<WorkoutDetail> {
-  const { data, error } = await supabase
-    .from('workouts')
-    .select(
-      'id, title, visibility, started_at, created_at, duration_minutes, exercises(id, name, order_index, rest_seconds, sets(set_number, weight, reps))',
-    )
-    .eq('id', id)
-    .single();
+  let res = await supabase.from('workouts').select(DETAIL_SELECT).eq('id', id).single();
+  if (res.error && res.error.code !== 'PGRST116') {
+    res = await supabase.from('workouts').select(DETAIL_SELECT_OLD).eq('id', id).single();
+  }
+  const { data, error } = res;
   if (error) throw error;
 
   const detail = data as unknown as WorkoutDetail;
@@ -81,7 +99,11 @@ export async function fetchWorkoutDetail(id: string): Promise<WorkoutDetail> {
         ...e,
         sets: [...(e.sets ?? [])]
           .sort((a, b) => a.set_number - b.set_number)
-          .map((s) => ({ ...s, weight: s.weight == null ? null : Number(s.weight) })),
+          .map((s) => ({
+            ...s,
+            weight: s.weight == null ? null : Number(s.weight),
+            rpe: s.rpe == null ? null : Number(s.rpe),
+          })),
       })),
   };
 }
@@ -139,6 +161,15 @@ export function formatDuration(minutes: number | null) {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-export function formatSet(set: { weight: number | null; reps: number }) {
-  return set.weight != null && set.weight > 0 ? `${set.weight} kg × ${set.reps}` : `${set.reps} reps`;
+export function formatSet(set: { weight: number | null; reps: number; rpe?: number | null }) {
+  const base = set.weight != null && set.weight > 0 ? `${set.weight} kg × ${set.reps}` : `${set.reps} reps`;
+  return set.rpe != null ? `${base} @${set.rpe}` : base;
 }
+
+export const SET_TYPE_LABEL: Record<string, string> = {
+  warmup: 'Warm-up',
+  drop: 'Drop set',
+  failure: 'To failure',
+  amrap: 'AMRAP',
+  backoff: 'Back-off',
+};
