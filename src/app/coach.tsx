@@ -16,10 +16,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import AppHeader, { ActiveWorkoutBanner } from '@/components/app-header';
+import CoachAnswerCard from '@/components/coach-answer';
+import DailyCheckIn from '@/components/daily-checkin';
 import ExerciseInfo from '@/components/exercise-info';
 import ExerciseThumb from '@/components/exercise-thumb';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
-import { answerCoach, QUICK_QUESTIONS } from '@/lib/coach/chat';
+import { recoveryStats, signedPct } from '@/lib/coach/analysis';
+import { answerCoach, CoachContext, CoachReply, QUICK_QUESTIONS } from '@/lib/coach/chat';
 import { CoachData, fetchCoachData } from '@/lib/coach/data';
 import {
   adaptivePlan,
@@ -31,13 +34,26 @@ import {
   weeklyGroupVolume,
   WEEKLY_SET_TARGET,
 } from '@/lib/coach/engine';
-import { findLibraryExercise } from '@/lib/exercise-library';
+import { EXERCISE_LIBRARY, findLibraryExercise } from '@/lib/exercise-library';
 import { useWorkoutSession } from '@/lib/workout-session';
 
 type Section = 'overview' | 'chat';
-type Message = { id: string; from: 'me' | 'coach'; text: string; exercise?: string };
+type Message = { id: string; from: 'me'; text: string } | { id: string; from: 'coach'; reply: CoachReply };
 
 const DAY = 24 * 60 * 60 * 1000;
+
+function contextFor(data: CoachData, fatigue: ReturnType<typeof fatigueStatus>, now: Date): CoachContext {
+  return {
+    exercises: data.exercises,
+    loads: data.loads,
+    fatigue,
+    daily: data.daily,
+    dailyAvailable: data.dailyAvailable,
+    targets: data.targets,
+    library: EXERCISE_LIBRARY,
+    now,
+  };
+}
 
 function levelColor(level: FatigueLevel, c: RepzyColors) {
   if (level === 'high') return c.error;
@@ -98,7 +114,7 @@ export default function CoachScreen() {
 
   return (
     <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]} edges={['top']}>
-      <AppHeader title="Coach" subtitle="Built from your own workouts" />
+      <AppHeader title="Coach" subtitle="Answers from your own data" />
       <ActiveWorkoutBanner />
 
       <View style={[styles.tabs, { backgroundColor: c.inputBg }]}>
@@ -135,6 +151,7 @@ export default function CoachScreen() {
           onRefresh={refresh}
           onInfo={setInfoFor}
           onAsk={() => setSection('chat')}
+          onReload={load}
         />
       ) : (
         <Chat
@@ -145,6 +162,7 @@ export default function CoachScreen() {
           onInfo={setInfoFor}
           messages={messages}
           setMessages={setMessages}
+          onReload={load}
         />
       )}
 
@@ -164,6 +182,7 @@ function Overview({
   onRefresh,
   onInfo,
   onAsk,
+  onReload,
 }: {
   data: CoachData;
   fatigue: ReturnType<typeof fatigueStatus>;
@@ -173,7 +192,21 @@ function Overview({
   onRefresh: () => void;
   onInfo: (name: string) => void;
   onAsk: () => void;
+  onReload: () => void;
 }) {
+  const [checkingIn, setCheckingIn] = useState(false);
+  const recovery = useMemo(() => recoveryStats(contextFor(data, fatigue, now)), [data, fatigue, now]);
+  const checkInCard = (
+    <CheckInCard
+      available={data.dailyAvailable}
+      recovery={recovery}
+      colors={c}
+      onPress={() => setCheckingIn(true)}
+    />
+  );
+  const checkInModal = checkingIn ? (
+    <DailyCheckIn today={recovery.today} onClose={() => setCheckingIn(false)} onSaved={onReload} />
+  ) : null;
   const plan = useMemo(() => adaptivePlan(data.exercises, fatigue, now), [data, fatigue, now]);
   const volume = useMemo(() => weeklyGroupVolume(data.exercises, now), [data, now]);
   const top = useMemo(() => topExercises(data.exercises, now), [data, now]);
@@ -181,12 +214,21 @@ function Overview({
 
   if (data.exercises.length === 0) {
     return (
-      <ScrollView contentContainerStyle={styles.center} refreshControl={refreshControl}>
-        <Text style={styles.bigEmoji}>🧠</Text>
-        <Text style={[styles.emptyText, { color: c.text }]}>
-          Log a workout and your coach will start tracking your strength, recommending weights and reps, predicting
-          your progress and watching your fatigue.
-        </Text>
+      <ScrollView contentContainerStyle={styles.content} refreshControl={refreshControl}>
+        <View style={styles.centerBlock}>
+          <Text style={styles.bigEmoji}>🧠</Text>
+          <Text style={[styles.emptyText, { color: c.text }]}>
+            Log a workout and your coach will start tracking your strength, recommending weights and reps, predicting
+            your progress and watching your fatigue.
+          </Text>
+        </View>
+        {checkInCard}
+        <Pressable
+          onPress={onAsk}
+          style={({ pressed }) => [styles.askButton, { backgroundColor: c.accent, opacity: pressed ? 0.85 : 1 }]}>
+          <Text style={styles.askText}>💬 Ask the coach for a program</Text>
+        </Pressable>
+        {checkInModal}
       </ScrollView>
     );
   }
@@ -196,6 +238,9 @@ function Overview({
 
   return (
     <ScrollView contentContainerStyle={styles.content} refreshControl={refreshControl}>
+      {checkInCard}
+      {checkInModal}
+
       {/* Readiness */}
       <View style={[styles.card, { backgroundColor: c.card }]}>
         <Text style={[styles.cardLabel, { color: c.subtext }]}>READINESS</Text>
@@ -305,9 +350,10 @@ function Overview({
       </Pressable>
 
       <Text style={[styles.disclaimer, { color: c.subtext }]}>
-        Based on {data.workoutCount} workout{data.workoutCount === 1 ? '' : 's'} from the last 120 days. The coach uses
-        standard training rules (double progression, estimated 1RM, training load), not an AI model. Predictions are
-        estimates. Listen to your body; this isn&apos;t medical advice.
+        Based on {data.workoutCount} workout{data.workoutCount === 1 ? '' : 's'} and {data.daily.length} check-in
+        {data.daily.length === 1 ? '' : 's'} from the last 120 days. The coach applies standard training rules (double
+        progression, estimated 1RM, effort, training load) to your data and shows the numbers behind every answer.
+        Predictions are estimates. Listen to your body; this isn&apos;t medical advice.
       </Text>
     </ScrollView>
   );
@@ -319,6 +365,71 @@ function Stat({ value, label, colors: c }: { value: string; label: string; color
       <Text style={[styles.statValue, { color: c.text }]}>{value}</Text>
       <Text style={[styles.statLabel, { color: c.subtext }]}>{label}</Text>
     </View>
+  );
+}
+
+function CheckInCard({
+  available,
+  recovery: r,
+  colors: c,
+  onPress,
+}: {
+  available: boolean;
+  recovery: ReturnType<typeof recoveryStats>;
+  colors: RepzyColors;
+  onPress: () => void;
+}) {
+  if (!available) {
+    return (
+      <View style={[styles.card, { backgroundColor: c.card }]}>
+        <Text style={[styles.cardLabel, { color: c.subtext }]}>DAILY CHECK-IN</Text>
+        <Text style={[styles.body, { color: c.subtext }]}>
+          Bodyweight, food and recovery tracking needs the latest database update. Run the SQL from the update notes,
+          then pull to refresh.
+        </Text>
+      </View>
+    );
+  }
+  const t = r.today;
+  const parts = t
+    ? [
+        t.sleep != null ? `😴 ${t.sleep} h` : null,
+        t.soreness != null ? `💢 sore ${t.soreness}/5` : null,
+        t.energy != null ? `⚡ energy ${t.energy}/5` : null,
+        t.bodyweight != null ? `⚖️ ${t.bodyweight} kg` : null,
+        t.calories != null ? `🍽 ${t.calories} kcal` : null,
+        t.protein != null ? `🥩 ${t.protein} g protein` : null,
+      ].filter(Boolean)
+    : [];
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.card, { backgroundColor: c.card, opacity: pressed ? 0.8 : 1 }]}>
+      <View style={styles.rowBetween}>
+        <Text style={[styles.cardLabel, { color: c.subtext }]}>TODAY&apos;S CHECK-IN</Text>
+        <Text style={{ color: c.accent, fontWeight: '800' }}>{t ? 'Edit' : 'Check in ›'}</Text>
+      </View>
+      {parts.length > 0 ? (
+        <Text style={[styles.body, { color: c.text }]}>{parts.join('   ')}</Text>
+      ) : (
+        <Text style={[styles.body, { color: c.subtext }]}>
+          Log sleep, soreness, energy, bodyweight and food so the coach can explain your progress, not just measure it.
+        </Text>
+      )}
+      {(r.bodyweight || r.sleepRecent != null) && (
+        <Text style={[styles.small, { color: c.subtext }]}>
+          {[
+            r.bodyweight
+              ? `Bodyweight ${signedPct(r.bodyweight.changePct)} over 30 days (${r.bodyweight.first.bodyweight} → ${r.bodyweight.last.bodyweight} kg)`
+              : null,
+            r.sleepRecent != null ? `Sleep this week: ${r.sleepRecent} h avg` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </Text>
+      )}
+    </Pressable>
   );
 }
 
@@ -335,6 +446,7 @@ function Chat({
   onInfo,
   messages: history,
   setMessages,
+  onReload,
 }: {
   data: CoachData;
   fatigue: ReturnType<typeof fatigueStatus>;
@@ -343,14 +455,12 @@ function Chat({
   onInfo: (name: string) => void;
   messages: Message[];
   setMessages: Dispatch<SetStateAction<Message[]>>;
+  onReload: () => void;
 }) {
   const greeting: Message = {
     id: 'hello',
     from: 'coach',
-    text:
-      data.exercises.length === 0
-        ? "Hi! I'm your Repzy coach. Log a workout and I'll have plenty to tell you."
-        : 'Hi! I\'m your Repzy coach. Ask about an exercise ("what should I do on bench?"), your fatigue, weekly sets, progress, or what to train today.',
+    reply: answerCoach('help', contextFor(data, fatigue, now)),
   };
   const messages = [greeting, ...history];
   const [text, setText] = useState('');
@@ -359,14 +469,12 @@ function Chat({
   function ask(question: string) {
     const q = question.trim();
     if (!q) return;
-    const reply = answerCoach(q, { exercises: data.exercises, fatigue, targets: data.targets, now });
-    setMessages((m) => [
-      ...m,
-      { id: nextId(), from: 'me', text: q },
-      { id: nextId(), from: 'coach', text: reply.text, exercise: reply.exercise },
-    ]);
+    const reply = answerCoach(q, contextFor(data, fatigue, now));
+    setMessages((m) => [...m, { id: nextId(), from: 'me', text: q }, { id: nextId(), from: 'coach', reply }]);
     setText('');
-    setTimeout(() => list.current?.scrollToEnd({ animated: true }), 50);
+    // show your question at the top, so a long answer reads from its start
+    const index = messages.length; // greeting + history; the new question lands here
+    setTimeout(() => list.current?.scrollToIndex({ index, viewPosition: 0, animated: true }), 120);
   }
 
   return (
@@ -377,25 +485,18 @@ function Chat({
         keyExtractor={(m) => m.id}
         contentContainerStyle={styles.messages}
         keyboardShouldPersistTaps="handled"
-        onContentSizeChange={() => list.current?.scrollToEnd({ animated: false })}
-        renderItem={({ item }) => (
-          <View
-            style={[
-              styles.bubble,
-              item.from === 'me'
-                ? [styles.mine, { backgroundColor: c.accent }]
-                : [styles.theirs, { backgroundColor: c.card }],
-            ]}>
-            <Text style={{ color: item.from === 'me' ? '#fff' : c.text, fontSize: 15, lineHeight: 21 }}>
-              {item.text}
-            </Text>
-            {item.exercise ? (
-              <Pressable onPress={() => onInfo(item.exercise as string)} hitSlop={6}>
-                <Text style={{ color: c.accent, fontWeight: '700', marginTop: 6 }}>View {item.exercise} ›</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        )}
+        onScrollToIndexFailed={() => list.current?.scrollToEnd({ animated: true })}
+        renderItem={({ item }) =>
+          item.from === 'me' ? (
+            <View style={[styles.bubble, styles.mine, { backgroundColor: c.accent }]}>
+              <Text style={{ color: '#fff', fontSize: 15, lineHeight: 21 }}>{item.text}</Text>
+            </View>
+          ) : (
+            <View style={[styles.bubble, styles.theirs, styles.coachBubble, { backgroundColor: c.card }]}>
+              <CoachAnswerCard reply={item.reply} colors={c} onInfo={onInfo} onRoutinesSaved={onReload} />
+            </View>
+          )
+        }
       />
 
       <ScrollView
@@ -442,6 +543,9 @@ const styles = StyleSheet.create({
   loading: { marginTop: 40 },
   center: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
   bigEmoji: { fontSize: 48 },
+  centerBlock: { alignItems: 'center', gap: 10, paddingVertical: 24 },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  coachBubble: { maxWidth: '94%' },
   emptyText: { fontSize: 16, textAlign: 'center', lineHeight: 23 },
   tabs: { flexDirection: 'row', marginHorizontal: 16, marginBottom: 8, borderRadius: 12, padding: 3 },
   tab: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 10 },

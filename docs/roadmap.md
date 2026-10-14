@@ -68,7 +68,13 @@ Coach tab (middle of the tab bar). Rule-based, from your own data; no AI model o
 | Fatigue / readiness | ✅ | Hard sets this week vs your 4-week average, plus lifts dropping >5% |
 | Adaptive programming | ✅ | Focus on least-trained muscle groups; push, hold or deload depending on fatigue |
 | Weekly sets per muscle vs 10–20 target | ✅ | |
-| Chat | ✅ | Understands questions about exercises, fatigue, sets, progress and what to train |
+| Chat | ✅ | Every answer shows RECOMMENDATION, WHY, the data used, and what data is missing |
+| "Why is my X not progressing?" / "Why did my X drop?" / "Why am I getting weaker?" | ✅ | Trend of last 3 vs 3 sessions, effort (RPE/RIR), frequency, weekly sets, load, sleep, soreness, bodyweight, calories, protein |
+| "Should I add another X day?" / "Should I train today?" / "How many sets?" | ✅ | Frequency, weekly sets vs 10–20, trend, fatigue, today's check-in, 48 h recovery per muscle group |
+| "Can I replace this exercise?" | ✅ | Same main muscle from the library; exercises you already log come first, with targets |
+| "Build me a 4-day hypertrophy program" | ✅ | 2–6 days, hypertrophy or strength; uses your exercises and starting weights; saves as routines |
+| Daily check-in: bodyweight, sleep, soreness, energy, calories, protein | ✅ | Needs `20261017_daily_logs.sql`; coach says "not in your data" when missing |
+| RIR | ✅ | Logged as RPE; RIR shown alongside (RIR = 10 − RPE) |
 | Real AI chat (free-form answers) | ⬜ | Possible later via the Claude API through a Supabase Edge Function (paid per message) |
 
 ## Known platform limits

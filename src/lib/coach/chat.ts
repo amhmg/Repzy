@@ -1,47 +1,49 @@
-// Coach chat: understands short questions and answers them from the coach engine.
-// This is rule-based (keyword matching + your data), not a language model, so every
-// answer is grounded in what you've logged.
+// Coach chat: works out what you're asking and answers it from your own data.
+// Rule-based (keyword matching + the analysis in ./analysis), not a language model:
+// every answer comes with its reasons and the data it used.
 
 import {
-  adaptivePlan,
-  type CoachExercise,
-  type FatigueStatus,
-  predictStrength,
-  recommendNext,
-  sessionBestE1rm,
-  weeklyGroupVolume,
-  WEEKLY_SET_TARGET,
-} from './engine';
+  type AnalysisContext,
+  type CoachAnswer,
+  type LibraryLite,
+  analyzeAddDay,
+  analyzeDrop,
+  analyzeExerciseTarget,
+  analyzeFatigue,
+  analyzePlateau,
+  analyzePrediction,
+  analyzeProgress,
+  analyzeReplace,
+  analyzeSets,
+  analyzeTrainToday,
+  analyzeWeaker,
+} from './analysis';
+import type { CoachExercise } from './engine';
+import { buildProgram, parseProgramRequest, type Program } from './program';
 
-export type CoachTarget = { min: number | null; max: number | null; sets?: number };
-
-export type CoachContext = {
-  exercises: CoachExercise[];
-  fatigue: FatigueStatus;
-  targets?: Map<string, CoachTarget>; // routine targets by lower-case exercise name
-  now?: Date;
-};
-
-export type CoachReply = {
-  text: string;
-  exercise?: string; // the exercise this answer is about (the app can show an info button)
-  intent: 'help' | 'fatigue' | 'plan' | 'volume' | 'progress' | 'predict' | 'recommend' | 'plateau' | 'unknown' | 'no_data';
-};
+export type { CoachTarget } from './analysis';
+export type CoachContext = AnalysisContext;
+export type CoachReply = { answer: CoachAnswer; program?: Program };
 
 export const QUICK_QUESTIONS = [
-  'What should I train today?',
+  'Should I train today?',
+  'Why am I getting weaker?',
+  'How many sets should I do?',
   'Am I overtraining?',
-  'Am I doing enough sets?',
+  'Build me a 4-day hypertrophy program',
   'How is my progress?',
 ];
 
 const STOP = new Set(
-  'a an the i me my to do does did on for of in at is am are be with and or should what whats how much many can could will would next time today weight weights reps rep set sets my it this that up get getting go lift lifting kg lb lbs predict prediction recommend strong stronger strength max 1rm one week weeks month months in about you your coach give tell please now going'.split(
-    ' ',
-  ),
+  (
+    'a an the i me my to do does did on for of in at is am are be with and or should what whats how much many can could will would next time today ' +
+    'weight weights reps rep set sets it this that up get getting go lift lifting kg lb lbs predict prediction recommend strong stronger strength max 1rm ' +
+    'one week weeks month months about you your coach give tell please now going why not progressing progress stuck plateau drop dropped weaker ' +
+    'replace swap substitute alternative instead exercise exercises add another extra day days train training build program split hypertrophy ' +
+    'improving improve doing enough so has have been was'
+  ).split(' '),
 );
 
-// Common short names people type
 const ALIASES: Record<string, string[]> = {
   bench: ['bench', 'press'],
   ohp: ['overhead', 'press'],
@@ -58,6 +60,15 @@ const ALIASES: Record<string, string[]> = {
   dips: ['dip'],
 };
 
+const GROUP_WORDS: [RegExp, string][] = [
+  [/\b(chest|pecs?)\b/, 'Chest'],
+  [/\b(back|lats?)\b/, 'Back'],
+  [/\b(shoulders?|delts?)\b/, 'Shoulders'],
+  [/\b(arms?|biceps?|triceps?|bis|tris)\b/, 'Arms'],
+  [/\b(legs?|quads?|hamstrings?|glutes?|calves|calf)\b/, 'Legs'],
+  [/\b(core|abs)\b/, 'Core'],
+];
+
 function words(text: string) {
   return text
     .toLowerCase()
@@ -66,175 +77,139 @@ function words(text: string) {
     .filter(Boolean);
 }
 
-// Finds which of your logged exercises the question is about, if any
-export function matchExercise(question: string, exercises: CoachExercise[]): CoachExercise | null {
-  const q = words(question).flatMap((w) => ALIASES[w] ?? [w]).filter((w) => !STOP.has(w) && w.length >= 2);
+export function matchGroup(question: string): string | null {
+  const q = question.toLowerCase();
+  for (const [re, g] of GROUP_WORDS) if (re.test(q)) return g;
+  return null;
+}
+
+function stripGroupWords(question: string) {
+  let q = question.toLowerCase();
+  for (const [re] of GROUP_WORDS) q = q.replace(new RegExp(re.source, 'g'), ' ');
+  return q;
+}
+
+function bestMatch<T extends { name: string }>(question: string, items: T[], extra: (t: T) => number): T | null {
+  const q = words(question)
+    .flatMap((w) => ALIASES[w] ?? [w])
+    .filter((w) => !STOP.has(w) && w.length >= 2);
   if (q.length === 0) return null;
-  let best: { ex: CoachExercise; score: number } | null = null;
-  for (const ex of exercises) {
-    const name = new Set(words(ex.name.replace(/-/g, ' ')));
+  let best: { item: T; score: number } | null = null;
+  for (const item of items) {
+    const name = new Set(words(item.name.replace(/-/g, ' ')));
     const hits = q.filter((w) => name.has(w) || name.has(w.replace(/s$/, ''))).length;
     if (hits === 0) continue;
-    // more matching words first; then the exercise you do most
-    const score = hits * 1000 + ex.sessions.length;
-    if (!best || score > best.score) best = { ex, score };
+    const score = hits * 1000 + extra(item);
+    if (!best || score > best.score) best = { item, score };
   }
-  return best?.ex ?? null;
+  return best?.item ?? null;
+}
+
+// Which of your logged exercises the question is about, if any
+export function matchExercise(question: string, exercises: CoachExercise[]): CoachExercise | null {
+  return bestMatch(question, exercises, (e) => e.sessions.length);
+}
+
+function matchLibrary(question: string, library: LibraryLite[]): LibraryLite | null {
+  return bestMatch(question, library, (l) => (l.popular ? 10 : 0) - l.name.length / 100);
 }
 
 function horizonDays(question: string) {
   const m = question.toLowerCase().match(/(\d+)\s*(day|week|wk|month)/);
   if (!m) return 28;
   const n = Math.min(26, Math.max(1, Number(m[1])));
-  const unit = m[2];
-  const days = unit === 'day' ? n : unit === 'month' ? n * 30 : n * 7;
+  const days = m[2] === 'day' ? n : m[2] === 'month' ? n * 30 : n * 7;
   return Math.min(182, Math.max(7, days));
 }
 
-function has(question: string, pattern: RegExp) {
-  return pattern.test(question.toLowerCase());
-}
+const has = (q: string, re: RegExp) => re.test(q.toLowerCase());
 
-function weeksLabel(days: number) {
-  const weeks = Math.round(days / 7);
-  return weeks >= 8 ? `${Math.round(days / 30)} months` : `${weeks} week${weeks === 1 ? '' : 's'}`;
-}
+const simple = (intent: CoachAnswer['intent'], recommendation: string, why: string[] = []): CoachReply => ({
+  answer: { intent, recommendation, why, evidence: [], missing: [] },
+});
 
 export function answerCoach(question: string, ctx: CoachContext): CoachReply {
-  const now = ctx.now ?? new Date();
   const q = question.trim();
 
-  if (ctx.exercises.length === 0) {
-    return {
-      intent: 'no_data',
-      text: "I haven't seen any workouts from you yet. Log your first one and I'll start tracking your strength, recommending weights and reps, and watching your fatigue.",
-    };
-  }
-
   if (q === '' || has(q, /^(hi|hey|hello|yo|help|\?)\b|what can you do/)) {
-    return {
-      intent: 'help',
-      text:
-        'Ask me about your training. For example:\n• "What should I do on bench next time?"\n• "How strong will my squat be in 8 weeks?"\n• "Am I overtraining?"\n• "What should I train today?"\n• "Am I doing enough sets?"\n• "Why am I stuck on deadlift?"',
-    };
+    return simple('help', 'Ask me about your training. I answer from your own workouts and check-ins, and show the data behind every answer.', [
+      'Why is my bench not progressing?',
+      'Why did my squat drop?',
+      'Should I add another chest day?',
+      'Should I train today?',
+      'How many sets should I do?',
+      'Can I replace leg press?',
+      'Build me a 4-day hypertrophy program',
+    ]);
   }
 
-  const ex = matchExercise(q, ctx.exercises);
-  const fatigue = ctx.fatigue;
-
-  if (ex) {
-    const target = ctx.targets?.get(ex.name.toLowerCase());
-    const plateau = has(q, /stuck|plateau|stall|not (getting|improving)|no progress|why/);
-    const predict = has(q, /predict|will|future|in \d+|by |1rm|max|how strong|forecast|expect/);
-
-    if (plateau || predict) {
-      const p = predictStrength(ex, now, horizonDays(q));
-      const rec = recommendNext(ex, { target, fatigue: fatigue.level });
-      if ('notEnoughData' in p) {
-        return {
-          intent: plateau ? 'plateau' : 'predict',
-          exercise: ex.name,
-          text: `${p.notEnoughData}\n\nFor now, next time aim for ${rec.headline}. ${rec.reason}`,
-        };
-      }
-      if (plateau) {
-        const tips =
-          p.trend === 'up'
-            ? `You're not actually stuck: your estimated 1RM is up about ${p.weeklyChangePct.toFixed(1)}% a week.`
-            : p.trend === 'down'
-              ? `Your estimated 1RM has dipped about ${Math.abs(p.weeklyChangePct).toFixed(1)}% a week. Usually that's fatigue, sleep or food, not your program.`
-              : `Your estimated 1RM has been flat at about ${p.current} kg over ${p.sessionsUsed} sessions.`;
-        const fix =
-          fatigue.level === 'high' || fatigue.level === 'elevated'
-            ? 'Your overall fatigue is up too, so a lighter week first is the best fix.'
-            : 'Try a different rep range for 3–4 weeks, add one set, or add reps before adding weight.';
-        return {
-          intent: 'plateau',
-          exercise: ex.name,
-          text: `${tips} ${fix}\n\nNext time: ${rec.headline}. ${rec.reason}`,
-        };
-      }
-      return {
-        intent: 'predict',
-        exercise: ex.name,
-        text: `${ex.name}: estimated 1RM about ${p.current} kg now → about ${p.predicted} kg in ${weeksLabel(p.horizonDays)} (${p.confidence} confidence, from ${p.sessionsUsed} sessions).\n\n${p.explanation}\n\nThis is an estimate from your trend, not a promise.`,
-      };
-    }
-
-    const rec = recommendNext(ex, { target, fatigue: fatigue.level });
-    const best = ex.sessions.length ? sessionBestE1rm(ex.sessions[ex.sessions.length - 1]) : null;
-    const last = best ? ` Your last session's best was about ${best} kg estimated 1RM.` : '';
-    return {
-      intent: 'recommend',
-      exercise: ex.name,
-      text: `${ex.name} next time: ${rec.headline} (${rec.repRange.min}–${rec.repRange.max} rep range).\n\n${rec.reason}${last}`,
-    };
-  }
-
-  if (has(q, /tired|fatigue|overtrain|over-train|rest day|recover|sore|deload|ready|readiness|burn ?out|too much/)) {
-    const extra =
-      fatigue.daysSinceLastWorkout != null && fatigue.daysSinceLastWorkout >= 4
-        ? ` It's been ${fatigue.daysSinceLastWorkout} days since your last workout.`
-        : '';
-    return { intent: 'fatigue', text: `${fatigue.headline}. ${fatigue.explanation}${extra}` };
-  }
-
-  if (has(q, /enough|volume|how many sets|sets per|muscle|balanced|imbalance|neglect/)) {
-    const volume = weeklyGroupVolume(ctx.exercises, now);
-    const lines = volume.map((v) => {
-      const mark = v.status === 'in_range' ? '✓' : v.status === 'over' ? '⚠︎' : '•';
-      const since = v.sets === 0 && v.lastTrainedDays != null ? ` (last trained ${v.lastTrainedDays} days ago)` : '';
-      return `${mark} ${v.group}: ${v.sets} sets${since}`;
+  // Programs can be built without history
+  if (has(q, /\b(program|programme|split)\b/) || (has(q, /\b(build|make|create|design|write)\b/) && has(q, /\b(routine|plan)\b/))) {
+    const { program, answer } = buildProgram(parseProgramRequest(q), {
+      exercises: ctx.exercises,
+      library: ctx.library ?? [],
+      fatigue: ctx.fatigue,
     });
-    const under = volume.filter((v) => v.status === 'none' || v.status === 'under').map((v) => v.group);
-    const over = volume.filter((v) => v.status === 'over').map((v) => v.group);
-    const summary = [
-      under.length ? `Under ${WEEKLY_SET_TARGET.min} sets: ${under.join(', ')}.` : 'Every group is at 10+ sets.',
-      over.length ? `Over ${WEEKLY_SET_TARGET.max}: ${over.join(', ')}; more isn't always better.` : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
-    return {
-      intent: 'volume',
-      text: `Hard sets in the last 7 days (warm-ups don't count). A common target for muscle growth is ${WEEKLY_SET_TARGET.min}–${WEEKLY_SET_TARGET.max} per group:\n${lines.join('\n')}\n\n${summary}`,
-    };
+    return { answer, program };
   }
 
-  if (has(q, /progress|improv|getting stronger|am i stronger|how am i doing|results|gains/)) {
-    const trends = ctx.exercises
-      .map((e) => ({ e, p: predictStrength(e, now) }))
-      .filter((x): x is { e: CoachExercise; p: Exclude<ReturnType<typeof predictStrength>, { notEnoughData: string }> } => !('notEnoughData' in x.p))
-      .sort((a, b) => b.p.weeklyChangePct - a.p.weeklyChangePct);
-    if (trends.length === 0) {
-      return {
-        intent: 'progress',
-        text: 'I need at least 3 weighted sessions of an exercise over 10+ days to measure progress. Keep logging and ask again soon.',
-      };
+  if (has(q, /replace|swap|substitut|alternative|instead of/)) {
+    const ex = matchExercise(q, ctx.exercises);
+    const lib = ex ? null : matchLibrary(q, ctx.library ?? []);
+    const name = ex?.name ?? lib?.name;
+    if (!name) return simple('clarify', 'Which exercise do you want to replace? For example: "Replace barbell bench press".');
+    return { answer: analyzeReplace(name, ctx) };
+  }
+
+  if (ctx.exercises.length === 0) {
+    return simple(
+      'no_data',
+      "I haven't seen any workouts from you yet. Log your first one and I'll start tracking your strength, effort and recovery. You can already ask me to build you a program.",
+    );
+  }
+
+  if (has(q, /should i (train|work ?out|go to the gym|lift|go)|train today|rest day|work ?out today|gym today|what should i (train|do today)/)) {
+    return { answer: analyzeTrainToday(ctx) };
+  }
+
+  const group = matchGroup(q);
+  const exInQuestion = matchExercise(stripGroupWords(q), ctx.exercises);
+
+  if (has(q, /\bday\b|\bdays\b|more often|frequency/) && has(q, /add|another|extra|more|second|third/)) {
+    const g = group ?? exInQuestion?.group ?? null;
+    if (!g) return simple('clarify', 'Which muscle group? For example: "Should I add another chest day?"');
+    return { answer: analyzeAddDay(g, ctx) };
+  }
+
+  if (has(q, /how many sets|sets should|number of sets|more sets|fewer sets|less sets|enough sets|enough volume|volume/)) {
+    return { answer: analyzeSets(ctx, exInQuestion ? null : group, exInQuestion) };
+  }
+
+  if (!exInQuestion && has(q, /weaker|losing strength|lost strength|getting worse|strength .*(drop|down)/)) {
+    return { answer: analyzeWeaker(ctx) };
+  }
+
+  const ex = exInQuestion;
+  if (ex) {
+    if (has(q, /drop|dropped|decreas|went down|go down|gone down|worse|weaker|lower|fell/)) return { answer: analyzeDrop(ex, ctx) };
+    if (has(q, /stuck|plateau|stall|not (progress|improv|going up|moving|getting)|no progress|isn.?t (progress|improv|going up|moving)|why/)) {
+      return { answer: analyzePlateau(ex, ctx) };
     }
-    const up = trends.filter((t) => t.p.trend === 'up');
-    const down = trends.filter((t) => t.p.trend === 'down');
-    const fmt = (t: (typeof trends)[number]) => `${t.e.name} (${t.p.weeklyChangePct > 0 ? '+' : ''}${t.p.weeklyChangePct.toFixed(1)}%/week)`;
-    const parts = [
-      `Measured ${trends.length} exercise${trends.length === 1 ? '' : 's'} by estimated 1RM.`,
-      up.length ? `Going up: ${up.slice(0, 4).map(fmt).join(', ')}.` : 'Nothing is clearly going up yet.',
-      down.length ? `Going down: ${down.slice(0, 3).map(fmt).join(', ')}.` : '',
-      trends.length - up.length - down.length > 0 ? `${trends.length - up.length - down.length} holding steady.` : '',
-    ];
-    return { intent: 'progress', text: parts.filter(Boolean).join(' ') };
+    if (has(q, /predict|will|future|in \d+|by |1rm|max|how strong|forecast|expect/)) {
+      return { answer: analyzePrediction(ex, ctx, horizonDays(q)) };
+    }
+    return { answer: analyzeExerciseTarget(ex, ctx) };
   }
 
-  if (has(q, /train|today|workout|plan|program|routine|schedule|week|focus|next/)) {
-    const plan = adaptivePlan(ctx.exercises, fatigue, now);
-    const sugg = plan.suggestions.map((s) => `• ${s.exercise}: ${s.recommendation.headline}`).join('\n');
-    const focus = plan.focusGroups.length ? `Focus on ${plan.focusGroups.join(' and ')} (least trained this week).` : '';
-    return {
-      intent: 'plan',
-      text: `${fatigue.level === 'not_enough_data' ? '' : `${fatigue.headline}. `}${focus}\n\n${plan.weekAdvice}${sugg ? `\n\n${sugg}` : ''}`.trim(),
-    };
+  if (has(q, /tired|fatigue|overtrain|over-train|recover|sore|deload|readiness|ready|burn ?out|too much/)) {
+    return { answer: analyzeFatigue(ctx) };
   }
+  if (has(q, /enough|muscle|balanced|imbalance|neglect/)) return { answer: analyzeSets(ctx, group) };
+  if (has(q, /progress|improv|stronger|how am i doing|results|gains/)) return { answer: analyzeProgress(ctx) };
+  if (has(q, /train|today|workout|plan|week|focus|next/)) return { answer: analyzeTrainToday(ctx) };
 
-  return {
-    intent: 'unknown',
-    text: "I didn't catch that. Name an exercise you've logged (like \"bench\" or \"squat\"), or ask about fatigue, weekly sets, progress or what to train today.",
-  };
+  return simple(
+    'unknown',
+    "I didn't catch that. Name an exercise you've logged (like \"bench\" or \"squat\"), or ask about training today, sets, fatigue, progress, replacing an exercise or building a program.",
+  );
 }

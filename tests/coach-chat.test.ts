@@ -91,10 +91,28 @@ describe('coach chat', () => {
     name: 'Barbell Full Squat',
     group: 'Legs',
     equipment: 'Barbell',
-    sessions: [{ date: daysAgo(12), sets: [{ weight: 100, reps: 5 }] }],
+    sessions: [
+      { date: daysAgo(12), sets: [{ weight: 100, reps: 5 }] },
+      { date: daysAgo(5), sets: [{ weight: 90, reps: 5 }] },
+    ],
   };
   const exercises = [bench, squat];
-  const ctx = { exercises, fatigue: fatigueStatus([], exercises, NOW), now: NOW };
+  const library = [
+    { name: 'Barbell Bench Press', group: 'Chest', muscle: 'Chest', equipment: 'Barbell', popular: true },
+    { name: 'Dumbbell Bench Press', group: 'Chest', muscle: 'Chest', equipment: 'Dumbbell', popular: true },
+    { name: 'Sled 45° Leg Press', group: 'Legs', muscle: 'Glutes', equipment: 'Sled Machine', popular: true },
+    { name: 'Barbell Full Squat', group: 'Legs', muscle: 'Glutes', equipment: 'Barbell', popular: true },
+  ];
+  const ctx = {
+    exercises,
+    loads: [],
+    fatigue: fatigueStatus([], exercises, NOW),
+    daily: [],
+    dailyAvailable: true,
+    library,
+    now: NOW,
+  };
+  const ask = (q: string, c = ctx) => answerCoach(q, c).answer;
 
   it('finds exercises by short names', () => {
     assert.equal(matchExercise('what should I do on bench?', exercises)?.name, 'Barbell Bench Press');
@@ -102,44 +120,51 @@ describe('coach chat', () => {
     assert.equal(matchExercise('Am I overtraining?', exercises), null);
   });
 
-  it('recommends weights and reps for a named exercise', () => {
-    const r = answerCoach('What should I do on bench next time?', { ...ctx, targets: new Map([['barbell bench press', { min: 8, max: 12 }]]) });
-    assert.equal(r.intent, 'recommend');
-    assert.equal(r.exercise, 'Barbell Bench Press');
-    assert.match(r.text, /80 kg × 9, 9, 9/);
+  it('routes every example question to the right analysis', () => {
+    const cases: [string, string][] = [
+      ['Why is my bench not progressing?', 'plateau'],
+      ['Should I add another chest day?', 'add_day'],
+      ['Why did my squat drop?', 'drop'],
+      ['Should I train today?', 'train_today'],
+      ['How many sets should I do?', 'sets'],
+      ['Can I replace this exercise?', 'clarify'],
+      ['Can I replace leg press?', 'replace'],
+      ['Why am I getting weaker?', 'weaker'],
+      ['Build me a 4-day hypertrophy program.', 'program'],
+      ['What should I do on bench next time?', 'recommend'],
+      ['How strong will my bench be in 8 weeks?', 'predict'],
+      ['Am I overtraining?', 'fatigue'],
+      ['How is my progress?', 'progress'],
+    ];
+    for (const [q, intent] of cases) assert.equal(ask(q).intent, intent, q);
   });
 
-  it('predicts strength over the horizon you ask for', () => {
-    const r = answerCoach('How strong will my bench be in 8 weeks?', ctx);
-    assert.equal(r.intent, 'predict');
-    assert.match(r.text, /in 8 weeks/);
-    assert.match(r.text, /estimate/);
+  it('a chest-day question is about the group, not an exercise with "chest" in its name', () => {
+    const dip: CoachExercise = { name: 'Chest Dip', group: 'Chest', equipment: 'Body Weight', sessions: [{ date: daysAgo(3), sets: [{ weight: null, reps: 10 }] }] };
+    const a = ask('Should I add another chest day?', { ...ctx, exercises: [...exercises, dip] });
+    assert.equal(a.intent, 'add_day');
   });
 
-  it('says when there is not enough data instead of guessing', () => {
-    const r = answerCoach('predict my squat', ctx);
-    assert.equal(r.intent, 'predict');
-    assert.match(r.text, /more time/);
+  it('recommendation answers include reasons and data', () => {
+    const r = ask('What should I do on bench next time?', { ...ctx, targets: new Map([['barbell bench press', { min: 8, max: 12 }]]) });
+    assert.match(r.recommendation, /80 kg × 9, 9, 9/);
+    assert.ok(r.why.length > 0);
+    assert.ok(r.evidence.length > 0);
   });
 
-  it('answers fatigue, volume, progress and plan questions', () => {
-    assert.equal(answerCoach('Am I overtraining?', ctx).intent, 'fatigue');
-    const v = answerCoach('Am I doing enough sets?', ctx);
-    assert.equal(v.intent, 'volume');
-    assert.match(v.text, /Chest: 3 sets/);
-    assert.equal(answerCoach('How is my progress?', ctx).intent, 'progress');
-    const plan = answerCoach('What should I train today?', ctx);
-    assert.equal(plan.intent, 'plan');
-    assert.match(plan.text, /Legs/);
+  it('a program comes back with days to save', () => {
+    const reply = answerCoach('build me a 3 day program', ctx);
+    assert.equal(reply.program?.days.length, 3);
   });
 
   it('every quick question gets a real answer', () => {
-    for (const q of QUICK_QUESTIONS) assert.notEqual(answerCoach(q, ctx).intent, 'unknown', q);
+    for (const q of QUICK_QUESTIONS) assert.ok(!['unknown', 'clarify'].includes(ask(q).intent), q);
   });
 
   it('handles no data, greetings and nonsense', () => {
-    assert.equal(answerCoach('hi', { ...ctx, exercises: [] }).intent, 'no_data');
-    assert.equal(answerCoach('hello', ctx).intent, 'help');
-    assert.equal(answerCoach('banana', ctx).intent, 'unknown');
+    assert.equal(ask('should I train today', { ...ctx, exercises: [] }).intent, 'no_data');
+    assert.equal(ask('build me a program', { ...ctx, exercises: [] }).intent, 'program');
+    assert.equal(ask('hello').intent, 'help');
+    assert.equal(ask('banana').intent, 'unknown');
   });
 });

@@ -1,8 +1,9 @@
+import { fetchDailyLogs } from '@/lib/daily-log';
 import { findLibraryExercise } from '@/lib/exercise-library';
 import { fetchRoutines } from '@/lib/routines';
 import { supabase } from '@/lib/supabase';
 
-import type { CoachTarget } from './chat';
+import type { CoachTarget, DailyLog } from './analysis';
 import type { CoachExercise, WorkoutLoad } from './engine';
 import { buildCoachInput, RawWorkout } from './input';
 
@@ -17,6 +18,8 @@ export type CoachData = {
   loads: WorkoutLoad[];
   targets: Map<string, CoachTarget>;
   workoutCount: number;
+  daily: DailyLog[]; // check-ins, oldest first
+  dailyAvailable: boolean; // false until the check-in database update is installed
 };
 
 // Your own workouts from the last 120 days, plus rep targets from your routines.
@@ -58,5 +61,13 @@ export async function fetchCoachData(): Promise<CoachData> {
     }
   } catch {}
 
-  return { exercises, loads, targets, workoutCount: rows.length };
+  let daily: DailyLog[] = [];
+  let dailyAvailable = false;
+  try {
+    const res = await fetchDailyLogs(DAYS);
+    daily = res.logs;
+    dailyAvailable = res.available;
+  } catch {}
+
+  return { exercises, loads, targets, workoutCount: rows.length, daily, dailyAvailable };
 }

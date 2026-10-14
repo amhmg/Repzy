@@ -1224,7 +1224,9 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                 { label: 'Duplicate set', onPress: () => duplicateSet(setSheet.exId, setSheet.setId) },
                 { label: 'Delete set', destructive: true, onPress: () => deleteSet(setSheet.exId, setSheet.setId) },
               ]}>
-              <Text style={[styles.rpeLabel, { color: c.subtext }]}>RPE (how hard, 10 = no reps left)</Text>
+              <Text style={[styles.rpeLabel, { color: c.subtext }]}>
+                Effort: RPE, or reps left in reserve (RIR). 10 = nothing left
+              </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rpeRow}>
                 {[null, ...RPE_VALUES].map((v) => {
                   const selected = (sheetSet.rpe ?? null) === v;
@@ -1234,6 +1236,11 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                       onPress={() => setSetRpe(setSheet.exId, setSheet.setId, v)}
                       style={[styles.rpeChip, { backgroundColor: selected ? c.accent : c.inputBg }]}>
                       <Text style={{ color: selected ? '#FFFFFF' : c.text, fontWeight: '700' }}>{v ?? '–'}</Text>
+                      {v != null && (
+                        <Text style={{ color: selected ? '#FFFFFF' : c.subtext, fontSize: 10, fontWeight: '600' }}>
+                          {Number.isInteger(10 - v) ? `${10 - v}` : `${Math.floor(10 - v)}–${Math.ceil(10 - v)}`} RIR
+                        </Text>
+                      )}
                     </Pressable>
                   );
                 })}
@@ -1387,7 +1394,7 @@ const styles = StyleSheet.create({
   rpeTag: { fontSize: 10, fontWeight: '700' },
   rpeLabel: { fontSize: 12, fontWeight: '700', marginLeft: 4 },
   rpeRow: { gap: 8, paddingVertical: 6, paddingHorizontal: 2 },
-  rpeChip: { minWidth: 44, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  rpeChip: { minWidth: 52, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 10, alignItems: 'center' },
   undoBar: {
     position: 'absolute',
     left: 16,
