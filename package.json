@@ -46,7 +46,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:coach": "node --experimental-strip-types --import ./tests/ts-resolve.mjs --test tests/coach-engine.test.ts tests/coach-chat.test.ts tests/coach-analysis.test.ts tests/avatar-upload.test.ts"
+    "test:coach": "node --experimental-strip-types --import ./tests/ts-resolve.mjs --test tests/coach-engine.test.ts tests/coach-chat.test.ts tests/coach-analysis.test.ts tests/coach-guided.test.ts tests/avatar-upload.test.ts"
   },
   "private": true
 }

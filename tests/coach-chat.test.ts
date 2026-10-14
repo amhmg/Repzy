@@ -152,6 +152,12 @@ describe('coach chat', () => {
     assert.ok(r.evidence.length > 0);
   });
 
+  it('"make me a 2 weeks hypertrophy workout" builds a 2-week program', () => {
+    const reply = answerCoach('make me a 2 weeks hypertrophy workout', ctx);
+    assert.equal(reply.answer.intent, 'program');
+    assert.equal(reply.program?.weeks, 2);
+  });
+
   it('a program comes back with days to save', () => {
     const reply = answerCoach('build me a 3 day program', ctx);
     assert.equal(reply.program?.days.length, 3);

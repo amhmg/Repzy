@@ -3,8 +3,9 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 
 import { RepzyColors } from '@/constants/repzy-colors';
 import type { CoachReply } from '@/lib/coach/chat';
-import type { Program } from '@/lib/coach/program';
+import type { Program, ProgramDay } from '@/lib/coach/program';
 import { formatRest } from '@/components/rest-picker';
+import RoutineEditor from '@/components/routine-editor';
 import { saveRoutine } from '@/lib/routines';
 
 // A coach answer: RECOMMENDATION, WHY, the data it used, and what data is missing.
@@ -89,76 +90,133 @@ export default function CoachAnswerCard({
   );
 }
 
+// Remembers which days were added even if the chat list unmounts this card while scrolling
+const addedDays = new WeakMap<Program, Set<string>>();
+
 function ProgramView({ program, colors: c, onSaved }: { program: Program; colors: RepzyColors; onSaved: () => void }) {
-  const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [editing, setEditing] = useState<string | null>(null); // day being reviewed in the routine editor
+  const [added, setAddedState] = useState<Set<string>>(() => addedDays.get(program) ?? new Set());
+  const setAdded = (update: (s: Set<string>) => Set<string>) =>
+    setAddedState((prev) => {
+      const next = update(prev);
+      addedDays.set(program, next);
+      return next;
+    });
+  const [savingAll, setSavingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function save() {
-    setState('saving');
+  const goalLabel = program.goal === 'strength' ? 'Strength' : 'Hypertrophy';
+  const notes = `Repzy Coach · ${program.name}\n${program.weekPlan.join('\n')}`.slice(0, 1000);
+  const routineFor = (day: ProgramDay) => ({
+    name: `${day.name} · ${program.weeks}-Wk ${goalLabel}`.slice(0, 60),
+    notes,
+    exercises: day.exercises.map((e) => ({
+      exercise_name: e.name,
+      target_sets: e.sets,
+      rep_min: e.repMin,
+      rep_max: e.repMax,
+      rest_seconds: e.restSeconds,
+      notes: e.start ? `Coach start: ${e.start}` : null,
+    })),
+  });
+
+  async function addAll() {
+    setSavingAll(true);
     setError(null);
-    let saved = 0;
     try {
       for (const day of program.days) {
-        await saveRoutine({
-          name: `${day.name} · ${program.daysPerWeek}-Day ${program.goal === 'strength' ? 'Strength' : 'Hypertrophy'}`,
-          notes: `Built by Repzy Coach: ${program.name}.`,
-          exercises: day.exercises.map((e) => ({
-            exercise_name: e.name,
-            target_sets: e.sets,
-            rep_min: e.repMin,
-            rep_max: e.repMax,
-            rest_seconds: e.restSeconds,
-            notes: null,
-          })),
-        });
-        saved++;
+        if (added.has(day.name)) continue;
+        await saveRoutine(routineFor(day));
+        setAdded((s) => new Set(s).add(day.name));
       }
-      setState('saved');
       onSaved();
     } catch (e: any) {
-      setState('idle');
-      setError(`${saved > 0 ? `Saved ${saved} of ${program.days.length} days. ` : ''}${e?.message ?? 'Could not save.'}`);
+      setError(e?.message ?? 'Could not add the routines.');
+    } finally {
+      setSavingAll(false);
     }
   }
 
+  const editingDay = program.days.find((d) => d.name === editing);
+  const allAdded = program.days.every((d) => added.has(d.name));
+
   return (
     <View style={styles.program}>
-      {program.days.map((day) => (
-        <View key={day.name} style={[styles.day, { borderColor: c.border }]}>
-          <Text style={[styles.dayName, { color: c.text }]}>{day.name}</Text>
-          {day.exercises.map((e) => (
-            <View key={e.name} style={styles.dayRow}>
-              <Text style={[styles.body, { color: c.text, flex: 1 }]} numberOfLines={2}>
-                {e.name}
-              </Text>
-              <View style={styles.dayRight}>
-                <Text style={[styles.small, { color: c.text, fontWeight: '700' }]}>
-                  {e.sets} × {e.repMin}–{e.repMax}
+      {program.days.map((day) => {
+        const isAdded = added.has(day.name);
+        return (
+          <View key={day.name} style={[styles.day, { borderColor: c.border }]}>
+            <Text style={[styles.dayName, { color: c.text }]}>{day.name}</Text>
+            {day.exercises.map((e) => (
+              <View key={e.name} style={styles.dayRow}>
+                <Text style={[styles.body, { color: c.text, flex: 1 }]} numberOfLines={2}>
+                  {e.name}
                 </Text>
-                <Text style={[styles.small, { color: c.subtext }]}>
-                  {e.start ? `start ${e.start}` : `rest ${formatRest(e.restSeconds)}`}
-                </Text>
+                <View style={styles.dayRight}>
+                  <Text style={[styles.small, { color: c.text, fontWeight: '700' }]}>
+                    {e.sets} × {e.repMin}–{e.repMax}
+                  </Text>
+                  <Text style={[styles.small, { color: c.subtext }]}>
+                    {e.start ? `start ${e.start}` : `rest ${formatRest(e.restSeconds)}`}
+                  </Text>
+                </View>
               </View>
-            </View>
-          ))}
-        </View>
-      ))}
-      <Pressable
-        onPress={save}
-        disabled={state !== 'idle'}
-        style={({ pressed }) => [
-          styles.saveButton,
-          { backgroundColor: state === 'saved' ? c.success : c.accent, opacity: pressed || state === 'saving' ? 0.7 : 1 },
-        ]}>
-        {state === 'saving' ? (
-          <ActivityIndicator color="#FFFFFF" />
-        ) : (
-          <Text style={styles.saveText}>
-            {state === 'saved' ? '✓ Saved to Workouts › Routines' : `Save as ${program.days.length} routines`}
+            ))}
+            <Pressable
+              onPress={() => setEditing(day.name)}
+              disabled={isAdded}
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.addButton,
+                { backgroundColor: isAdded ? c.successSoft : c.accent, opacity: pressed ? 0.8 : 1 },
+              ]}>
+              <Text style={[styles.addText, { color: isAdded ? c.success : '#FFFFFF' }]}>
+                {isAdded ? '✓ Added to your routines' : '+ Add routine'}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
+
+      <View style={[styles.day, { borderColor: c.border }]}>
+        <Text style={[styles.dayName, { color: c.text }]}>Week by week</Text>
+        {program.weekPlan.map((w) => (
+          <Text key={w} style={[styles.small, { color: c.text }]}>
+            {w}
           </Text>
-        )}
-      </Pressable>
+        ))}
+      </View>
+
+      {!allAdded && program.days.length > 1 && (
+        <Pressable
+          onPress={addAll}
+          disabled={savingAll}
+          style={({ pressed }) => [styles.saveButton, { borderColor: c.accent, opacity: pressed || savingAll ? 0.7 : 1 }]}>
+          {savingAll ? (
+            <ActivityIndicator />
+          ) : (
+            <Text style={[styles.saveText, { color: c.accent }]}>Add all {program.days.length} routines</Text>
+          )}
+        </Pressable>
+      )}
+      {allAdded && (
+        <Text style={[styles.small, { color: c.success, textAlign: 'center' }]}>
+          All days are in Workouts › Routines. Tap one there to start it.
+        </Text>
+      )}
       {error && <Text style={{ color: c.error }}>{error}</Text>}
+
+      {editingDay && (
+        <RoutineEditor
+          draft={routineFor(editingDay)}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setAdded((s) => new Set(s).add(editingDay.name));
+            setEditing(null);
+            onSaved();
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -183,6 +241,8 @@ const styles = StyleSheet.create({
   dayName: { fontSize: 15, fontWeight: '800' },
   dayRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   dayRight: { alignItems: 'flex-end' },
-  saveButton: { borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
-  saveText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  addButton: { borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 4 },
+  addText: { fontWeight: '800', fontSize: 14 },
+  saveButton: { borderRadius: 12, paddingVertical: 12, alignItems: 'center', borderWidth: 1.5 },
+  saveText: { fontWeight: '800', fontSize: 15 },
 });

@@ -42,19 +42,22 @@ function parseReps(text: string): number | null {
 
 export default function RoutineEditor({
   routine,
+  draft,
   onClose,
   onSaved,
 }: {
   routine?: Routine; // editing an existing routine; omit to create a new one
+  draft?: { name: string; notes: string | null; exercises: RoutineExercise[] }; // a new routine, pre-filled (e.g. by the coach)
   onClose: () => void;
   onSaved: () => void;
 }) {
   const c = useRepzyColors();
   const { settings } = useSettings();
 
-  const [name, setName] = useState(routine?.name ?? '');
-  const [notes, setNotes] = useState(routine?.notes ?? '');
-  const [exercises, setExercises] = useState<EditableExercise[]>(() => (routine?.exercises ?? []).map(toEditable));
+  const start = routine ?? draft;
+  const [name, setName] = useState(start?.name ?? '');
+  const [notes, setNotes] = useState(start?.notes ?? '');
+  const [exercises, setExercises] = useState<EditableExercise[]>(() => (start?.exercises ?? []).map(toEditable));
   const [picking, setPicking] = useState(false);
   const [restFor, setRestFor] = useState<string | null>(null);
   const [infoFor, setInfoFor] = useState<string | null>(null);

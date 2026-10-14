@@ -77,6 +77,8 @@ export default function ExercisePicker({
         />
       </View>
 
+      {/* fixed height: on Android a horizontal ScrollView can measure too short, letting the list cover the labels */}
+      <View style={styles.chipBar}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -114,8 +116,10 @@ export default function ExercisePicker({
           );
         })}
       </ScrollView>
+      </View>
 
       <FlatList
+        style={styles.flex}
         data={results}
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
@@ -198,9 +202,10 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 17, fontWeight: '700' },
   searchWrap: { paddingHorizontal: 16, paddingTop: 12 },
   search: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
-  chipScroll: { flexGrow: 0 },
+  chipBar: { height: 104 },
+  chipScroll: { flex: 1 },
   chipRow: { paddingHorizontal: 16, paddingVertical: 10, gap: 10, alignItems: 'flex-start' },
-  chip: { width: 64, alignItems: 'center', gap: 4 },
+  chip: { width: 68, height: 84, alignItems: 'center', gap: 5 },
   chipPicture: {
     width: 60,
     height: 56,
@@ -211,7 +216,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   chipEmoji: { fontSize: 24, color: '#F5B301' },
-  chipLabel: { fontSize: 11 },
+  chipLabel: { fontSize: 12, lineHeight: 16 },
   list: { paddingHorizontal: 16, paddingBottom: 40 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },

@@ -188,8 +188,11 @@ describe('Can I replace this exercise?', () => {
 
 describe('Build me a 4-day hypertrophy program', () => {
   it('reads days and goal from the question', () => {
-    assert.deepEqual(parseProgramRequest('Build me a 4-day hypertrophy program'), { days: 4, goal: 'hypertrophy' });
-    assert.deepEqual(parseProgramRequest('make a three day strength split'), { days: 3, goal: 'strength' });
+    assert.deepEqual(parseProgramRequest('Build me a 4-day hypertrophy program'), { days: 4, goal: 'hypertrophy', weeks: 4, equipment: 'gym' });
+    assert.deepEqual(parseProgramRequest('make a three day strength split'), { days: 3, goal: 'strength', weeks: 4, equipment: 'gym' });
+    // the bug you hit: "2 weeks" is the length, not the days per week
+    assert.deepEqual(parseProgramRequest('make me a 2 weeks hypertrophy workout'), { days: 4, goal: 'hypertrophy', weeks: 2, equipment: 'gym' });
+    assert.deepEqual(parseProgramRequest('3 day dumbbell program for 8 weeks'), { days: 3, goal: 'hypertrophy', weeks: 8, equipment: 'dumbbells' });
   });
 
   it('every exercise name exists in the library', () => {
@@ -208,6 +211,28 @@ describe('Build me a 4-day hypertrophy program', () => {
     assert.ok(chest >= 9 && chest <= 20);
     assert.ok(answer.why.some((w) => w.includes('upper/lower')));
   });
+
+  it('a 2-week program has a 2-week plan', () => {
+    const { program } = buildProgram({ days: 4, goal: 'hypertrophy', weeks: 2, equipment: 'gym' }, { exercises: [], library: LIBRARY, fatigue: fatigueStatus([], [], NOW) });
+    assert.equal(program.weekPlan.length, 2);
+    assert.match(program.name, /^2-Week Hypertrophy/);
+  });
+
+  it('6+ week programs end with a lighter week', () => {
+    const { program } = buildProgram({ days: 3, goal: 'hypertrophy', weeks: 6, equipment: 'gym' }, { exercises: [], library: LIBRARY, fatigue: fatigueStatus([], [], NOW) });
+    assert.match(program.weekPlan[5], /lighter week/);
+  });
+
+  for (const equipment of ['dumbbells', 'bodyweight'] as const) {
+    it(`${equipment} only: every exercise matches the equipment`, () => {
+      const { program } = buildProgram({ days: 4, goal: 'hypertrophy', weeks: 4, equipment }, { exercises: [], library: LIBRARY, fatigue: fatigueStatus([], [], NOW) });
+      const ok = equipment === 'dumbbells' ? ['Dumbbell', 'Body Weight'] : ['Body Weight'];
+      for (const d of program.days) {
+        assert.ok(d.exercises.length >= 4, `${d.name} has enough exercises`);
+        for (const e of d.exercises) assert.ok(ok.includes(LIBRARY.find((l) => l.name === e.name)?.equipment ?? ''), e.name);
+      }
+    });
+  }
 
   for (const days of [2, 3, 5, 6]) {
     it(`${days} days works`, () => {

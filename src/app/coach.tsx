@@ -23,6 +23,7 @@ import ExerciseThumb from '@/components/exercise-thumb';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
 import { recoveryStats, signedPct } from '@/lib/coach/analysis';
 import { answerCoach, CoachContext, CoachReply, QUICK_QUESTIONS } from '@/lib/coach/chat';
+import { FlowState, GuidedOption, guidedStep } from '@/lib/coach/guided';
 import { CoachData, fetchCoachData } from '@/lib/coach/data';
 import {
   adaptivePlan,
@@ -457,30 +458,68 @@ function Chat({
   setMessages: Dispatch<SetStateAction<Message[]>>;
   onReload: () => void;
 }) {
+  const ctx = contextFor(data, fatigue, now);
   const greeting: Message = {
     id: 'hello',
     from: 'coach',
-    reply: answerCoach('help', contextFor(data, fatigue, now)),
+    reply: {
+      answer: {
+        intent: 'help',
+        recommendation:
+          "Hi! I'm your Repzy coach. Pick what you want help with below and I'll ask a couple of quick questions, or type your own.",
+        why: [],
+        evidence: [],
+        missing: [],
+      },
+    },
   };
   const messages = [greeting, ...history];
   const [text, setText] = useState('');
+  const [typing, setTyping] = useState(false);
+  const [flows, setFlows] = useState<FlowState[]>([{}]); // stack, so Back works
+  const flow = flows[flows.length - 1];
+  const step = guidedStep(flow, ctx);
   const list = useRef<FlatList<Message>>(null);
+
+  function scrollToQuestion(index: number) {
+    setTimeout(() => list.current?.scrollToIndex({ index, viewPosition: 0, animated: true }), 120);
+  }
 
   function ask(question: string) {
     const q = question.trim();
     if (!q) return;
-    const reply = answerCoach(q, contextFor(data, fatigue, now));
+    const reply = answerCoach(q, ctx);
     setMessages((m) => [...m, { id: nextId(), from: 'me', text: q }, { id: nextId(), from: 'coach', reply }]);
     setText('');
-    // show your question at the top, so a long answer reads from its start
-    const index = messages.length; // greeting + history; the new question lands here
-    setTimeout(() => list.current?.scrollToIndex({ index, viewPosition: 0, animated: true }), 120);
+    scrollToQuestion(messages.length);
+  }
+
+  function choose(option: GuidedOption) {
+    const next = { ...flow, ...option.apply };
+    const result = guidedStep(next, ctx);
+    if (result.kind === 'type') {
+      setTyping(true);
+      setFlows([{}]);
+      return;
+    }
+    if (result.kind === 'answer') {
+      setMessages((m) => [
+        ...m,
+        { id: nextId(), from: 'me', text: result.summary },
+        { id: nextId(), from: 'coach', reply: result.reply },
+      ]);
+      setFlows([{}]);
+      scrollToQuestion(messages.length);
+      return;
+    }
+    setFlows((f) => [...f, next]);
   }
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <FlatList
         ref={list}
+        style={styles.flex}
         data={messages}
         keyExtractor={(m) => m.id}
         contentContainerStyle={styles.messages}
@@ -499,41 +538,76 @@ function Chat({
         }
       />
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        style={styles.chipsScroll}
-        contentContainerStyle={styles.chips}>
-        {QUICK_QUESTIONS.map((q) => (
-          <Pressable
-            key={q}
-            onPress={() => ask(q)}
-            style={({ pressed }) => [styles.chip, { borderColor: c.border, opacity: pressed ? 0.6 : 1 }]}>
-            <Text style={{ color: c.text, fontWeight: '600', fontSize: 13 }}>{q}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      <View style={[styles.inputRow, { borderTopColor: c.border }]}>
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          placeholder="Message your coach…"
-          placeholderTextColor={c.subtext}
-          style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
-          returnKeyType="send"
-          onSubmitEditing={() => ask(text)}
-          maxLength={300}
-        />
-        <Pressable
-          onPress={() => ask(text)}
-          disabled={!text.trim()}
-          accessibilityLabel="Send"
-          style={[styles.send, { backgroundColor: c.accent, opacity: text.trim() ? 1 : 0.4 }]}>
-          <Text style={styles.sendText}>↑</Text>
-        </Pressable>
-      </View>
+      {typing ? (
+        <>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            style={styles.chipsScroll}
+            contentContainerStyle={styles.chips}>
+            <Pressable
+              onPress={() => setTyping(false)}
+              style={({ pressed }) => [styles.chip, { borderColor: c.accent, opacity: pressed ? 0.6 : 1 }]}>
+              <Text style={{ color: c.accent, fontWeight: '800', fontSize: 13 }}>☰ Choose from options</Text>
+            </Pressable>
+            {QUICK_QUESTIONS.map((q) => (
+              <Pressable
+                key={q}
+                onPress={() => ask(q)}
+                style={({ pressed }) => [styles.chip, { borderColor: c.border, opacity: pressed ? 0.6 : 1 }]}>
+                <Text style={{ color: c.text, fontWeight: '600', fontSize: 13 }}>{q}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <View style={[styles.inputRow, { borderTopColor: c.border }]}>
+            <TextInput
+              value={text}
+              onChangeText={setText}
+              placeholder="Message your coach…"
+              placeholderTextColor={c.subtext}
+              style={[styles.input, { backgroundColor: c.inputBg, color: c.text }]}
+              returnKeyType="send"
+              onSubmitEditing={() => ask(text)}
+              maxLength={300}
+              autoFocus
+            />
+            <Pressable
+              onPress={() => ask(text)}
+              disabled={!text.trim()}
+              accessibilityLabel="Send"
+              style={[styles.send, { backgroundColor: c.accent, opacity: text.trim() ? 1 : 0.4 }]}>
+              <Text style={styles.sendText}>↑</Text>
+            </Pressable>
+          </View>
+        </>
+      ) : step.kind === 'ask' ? (
+        <View style={[styles.panel, { borderTopColor: c.border, backgroundColor: c.background }]}>
+          <View style={styles.panelHeader}>
+            <Text style={[styles.panelQuestion, { color: c.text }]}>{step.question}</Text>
+            {flows.length > 1 && (
+              <Pressable onPress={() => setFlows((f) => f.slice(0, -1))} hitSlop={8} accessibilityRole="button">
+                <Text style={{ color: c.accent, fontWeight: '700' }}>‹ Back</Text>
+              </Pressable>
+            )}
+          </View>
+          <ScrollView style={styles.optionsScroll} contentContainerStyle={styles.options} keyboardShouldPersistTaps="handled">
+            {step.options.map((o) => (
+              <Pressable
+                key={o.label}
+                onPress={() => choose(o)}
+                accessibilityRole="button"
+                style={({ pressed }) => [
+                  styles.option,
+                  { backgroundColor: pressed ? c.accentSoft : c.card, borderColor: c.border },
+                ]}>
+                <Text style={[styles.optionText, { color: c.text }]}>{o.label}</Text>
+                {o.detail ? <Text style={[styles.optionDetail, { color: c.subtext }]}>{o.detail}</Text> : null}
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
     </KeyboardAvoidingView>
   );
 }
@@ -591,4 +665,12 @@ const styles = StyleSheet.create({
   input: { flex: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   sendText: { color: '#fff', fontSize: 20, fontWeight: '800' },
+  panel: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 10, paddingHorizontal: 12, paddingBottom: 6 },
+  panelHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 },
+  panelQuestion: { flex: 1, fontSize: 16, fontWeight: '800' },
+  optionsScroll: { maxHeight: 300 },
+  options: { gap: 8, paddingBottom: 6 },
+  option: { borderWidth: 1, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14 },
+  optionText: { fontSize: 15, fontWeight: '700' },
+  optionDetail: { fontSize: 12, marginTop: 2 },
 });

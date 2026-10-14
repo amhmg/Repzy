@@ -144,7 +144,10 @@ export function answerCoach(question: string, ctx: CoachContext): CoachReply {
   }
 
   // Programs can be built without history
-  if (has(q, /\b(program|programme|split)\b/) || (has(q, /\b(build|make|create|design|write)\b/) && has(q, /\b(routine|plan)\b/))) {
+  if (
+    has(q, /\b(program|programme|split)\b/) ||
+    (has(q, /\b(build|make|create|design|write|generate|give me|plan me)\b/) && has(q, /\b(routine|plan|workout|workouts|schedule)\b/))
+  ) {
     const { program, answer } = buildProgram(parseProgramRequest(q), {
       exercises: ctx.exercises,
       library: ctx.library ?? [],
