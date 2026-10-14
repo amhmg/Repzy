@@ -14,12 +14,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import Avatar from '@/components/avatar';
 import ExerciseInfo from '@/components/exercise-info';
 import { WorkoutDetailView } from '@/components/workout-history';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
 import { useAuth } from '@/lib/auth';
 import {
   deleteGroup,
+  fetchAvatars,
   fetchGroupFeed,
   fetchGroupLeaderboard,
   GroupFeedItem,
@@ -64,6 +66,7 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
 
   const [openWorkout, setOpenWorkout] = useState<GroupFeedItem | null>(null);
   const [infoFor, setInfoFor] = useState<string | null>(null);
+  const [avatars, setAvatars] = useState<Record<string, string | null>>({});
 
   const load = useCallback(async () => {
     setError(null);
@@ -72,6 +75,7 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
       setMembers(board);
       setFeed(firstPage.rows);
       setHasMore(firstPage.hasMore);
+      fetchAvatars(board.map((m) => m.user_id)).then(setAvatars);
     } catch (e: any) {
       setError(e.message ?? 'Could not load this group');
     }
@@ -254,6 +258,7 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
                     member={m}
                     rank={i}
                     isMe={m.user_id === myId}
+                    avatar={avatars[m.user_id]}
                     colors={c}
                   />
                 ))}
@@ -279,6 +284,7 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
                   <FeedCard
                     item={item}
                     isMe={item.user_id === myId}
+                    avatar={avatars[item.user_id]}
                     colors={c}
                     onPress={() => setOpenWorkout(item)}
                   />
@@ -307,11 +313,13 @@ function MemberRow({
   member: m,
   rank,
   isMe,
+  avatar,
   colors: c,
 }: {
   member: GroupMemberStats;
   rank: number;
   isMe: boolean;
+  avatar: string | null | undefined;
   colors: RepzyColors;
 }) {
   const active = m.week_workouts > 0;
@@ -322,6 +330,7 @@ function MemberRow({
         { backgroundColor: c.card, borderColor: isMe ? c.accent : 'transparent', opacity: active ? 1 : 0.6 },
       ]}>
       <Text style={styles.rank}>{active && rank < 3 ? MEDALS[rank] : `${rank + 1}`}</Text>
+      <Avatar url={avatar} name={m.display_name || m.username || '?'} size={40} />
       <View style={styles.flex}>
         <Text style={[styles.memberName, { color: c.text }]} numberOfLines={1}>
           {memberName(m)}
@@ -348,11 +357,13 @@ function MemberRow({
 function FeedCard({
   item,
   isMe,
+  avatar,
   colors: c,
   onPress,
 }: {
   item: GroupFeedItem;
   isMe: boolean;
+  avatar: string | null | undefined;
   colors: RepzyColors;
   onPress: () => void;
 }) {
@@ -365,6 +376,7 @@ function FeedCard({
       onPress={onPress}
       style={({ pressed }) => [styles.card, { backgroundColor: c.card, opacity: pressed ? 0.7 : 1 }]}>
       <View style={styles.cardTop}>
+        <Avatar url={avatar} name={item.display_name || item.username || '?'} size={24} />
         <Text style={[styles.cardAuthor, { color: c.accent }]} numberOfLines={1}>
           {isMe ? 'You' : memberName(item)}
         </Text>

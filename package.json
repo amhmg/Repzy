@@ -13,6 +13,7 @@
     "expo-glass-effect": "~57.0.1",
     "expo-haptics": "~57.0.3",
     "expo-image": "~57.0.3",
+    "expo-image-picker": "~57.0.20",
     "expo-linking": "~57.0.6",
     "expo-notifications": "~57.0.11",
     "expo-router": "~57.0.13",
@@ -45,7 +46,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:coach": "node --experimental-strip-types --import ./tests/ts-resolve.mjs --test tests/coach-engine.test.ts tests/coach-chat.test.ts"
+    "test:coach": "node --experimental-strip-types --import ./tests/ts-resolve.mjs --test tests/coach-engine.test.ts tests/coach-chat.test.ts tests/avatar-upload.test.ts"
   },
   "private": true
 }

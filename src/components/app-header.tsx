@@ -1,14 +1,23 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import Avatar from '@/components/avatar';
 import ProfileSettings from '@/components/profile-settings';
 import { useRepzyColors } from '@/constants/repzy-colors';
-import { initials, useProfile } from '@/lib/profile';
+import { useProfile } from '@/lib/profile';
 import { draftDoneSets } from '@/lib/workout-draft';
 import { useWorkoutSession } from '@/lib/workout-session';
 
 // Screen title on the left, profile avatar on the right (opens Profile & Settings).
-export default function AppHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+export default function AppHeader({
+  title,
+  subtitle,
+  small,
+}: {
+  title: string;
+  subtitle?: string;
+  small?: boolean; // for long titles like the Home greeting
+}) {
   const c = useRepzyColors();
   const { profile } = useProfile();
   const [showProfile, setShowProfile] = useState(false);
@@ -16,7 +25,11 @@ export default function AppHeader({ title, subtitle }: { title: string; subtitle
   return (
     <View style={styles.header}>
       <View style={styles.flex}>
-        <Text style={[styles.title, { color: c.text }]} numberOfLines={1}>
+        <Text
+          style={[styles.title, small && styles.titleSmall, { color: c.text }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.6}>
           {title}
         </Text>
         {subtitle ? (
@@ -30,8 +43,8 @@ export default function AppHeader({ title, subtitle }: { title: string; subtitle
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel="Profile and settings"
-        style={({ pressed }) => [styles.avatar, { backgroundColor: c.accent, opacity: pressed ? 0.7 : 1 }]}>
-        <Text style={styles.avatarText}>{initials(profile)}</Text>
+        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+        <Avatar url={profile?.avatar_url} name={profile?.display_name || profile?.username || '?'} size={40} />
       </Pressable>
       {showProfile && <ProfileSettings onClose={() => setShowProfile(false)} />}
     </View>
@@ -84,9 +97,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 },
   title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.5 },
+  titleSmall: { fontSize: 22, letterSpacing: -0.2 },
   subtitle: { fontSize: 14, marginTop: 2 },
-  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#FFFFFF', fontWeight: '900', fontSize: 15 },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',

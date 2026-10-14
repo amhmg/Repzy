@@ -1,4 +1,3 @@
-import Constants from 'expo-constants';
 import { ReactNode, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,10 +13,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import Avatar from '@/components/avatar';
+import AvatarPicker from '@/components/avatar-picker';
 import RestPicker, { formatRest } from '@/components/rest-picker';
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
 import { useAuth } from '@/lib/auth';
-import { initials, useProfile } from '@/lib/profile';
+import { useProfile } from '@/lib/profile';
 import { useSettings } from '@/lib/settings';
 import { supabase } from '@/lib/supabase';
 import { useWorkoutSession } from '@/lib/workout-session';
@@ -33,6 +34,7 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
   const [savingName, setSavingName] = useState(false);
   const [nameMessage, setNameMessage] = useState<string | null>(null);
   const [pickingRest, setPickingRest] = useState(false);
+  const [pickingAvatar, setPickingAvatar] = useState(false);
 
   const nameChanged = name.trim() !== (profile?.display_name ?? '').trim();
 
@@ -75,9 +77,14 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
 
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.identity}>
-            <View style={[styles.avatar, { backgroundColor: c.accent }]}>
-              <Text style={styles.avatarText}>{initials(profile)}</Text>
-            </View>
+            <Pressable
+              onPress={() => setPickingAvatar(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Change profile picture"
+              style={({ pressed }) => [styles.avatarButton, { opacity: pressed ? 0.7 : 1 }]}>
+              <Avatar url={profile?.avatar_url} name={profile?.display_name || profile?.username || '?'} size={88} />
+              <Text style={{ color: c.accent, fontWeight: '700' }}>Change picture</Text>
+            </Pressable>
             <Text style={[styles.username, { color: c.text }]}>@{profile?.username ?? '...'}</Text>
             <Text style={{ color: c.subtext }}>{session?.user.email}</Text>
           </View>
@@ -148,18 +155,17 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
             />
           </Section>
 
-          <Section title="About" colors={c}>
-            <Text style={[styles.hint, { color: c.subtext }]}>
-              Repzy {Constants.expoConfig?.version ?? ''}. Exercise animations and instructions by ExerciseDB
-              (exercisedb.dev).
-            </Text>
-          </Section>
-
           <Pressable onPress={logOut} style={[styles.logout, { borderColor: c.error }]}>
             <Text style={{ color: c.error, fontWeight: '800', fontSize: 16 }}>Log out</Text>
           </Pressable>
         </ScrollView>
 
+        {pickingAvatar && (
+          <AvatarPicker
+            name={profile?.display_name || profile?.username || '?'}
+            onClose={() => setPickingAvatar(false)}
+          />
+        )}
         {pickingRest && (
           <RestPicker
             exerciseName="Default for new exercises"
@@ -224,8 +230,7 @@ const styles = StyleSheet.create({
   done: { fontSize: 16, fontWeight: '800' },
   content: { padding: 16, gap: 18, paddingBottom: 48 },
   identity: { alignItems: 'center', gap: 4, marginTop: 8 },
-  avatar: { width: 84, height: 84, borderRadius: 42, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
-  avatarText: { color: '#FFFFFF', fontSize: 32, fontWeight: '900' },
+  avatarButton: { alignItems: 'center', gap: 6, marginBottom: 6 },
   username: { fontSize: 20, fontWeight: '800' },
   section: { gap: 8 },
   sectionTitle: { fontSize: 13, fontWeight: '800', textTransform: 'uppercase', marginLeft: 4 },

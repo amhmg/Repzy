@@ -250,7 +250,8 @@ function InputSheet({
         <TextInput
           style={[
             styles.input,
-            code && styles.codeInput,
+            // the big spaced-out style only once you start typing, so the placeholder fits
+            code && value.length > 0 && styles.codeInput,
             { backgroundColor: c.inputBg, color: c.text },
           ]}
           value={value}
@@ -341,6 +342,6 @@ const styles = StyleSheet.create({
   bigEmoji: { fontSize: 44, textAlign: 'center' },
   code: { fontSize: 36, fontWeight: '900', letterSpacing: 6, textAlign: 'center' },
   input: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 14, fontSize: 17 },
-  codeInput: { fontSize: 24, fontWeight: '800', letterSpacing: 6, textAlign: 'center' },
+  codeInput: { fontSize: 22, fontWeight: '800', letterSpacing: 4, textAlign: 'center' },
   error: { textAlign: 'center', fontSize: 14 },
 });

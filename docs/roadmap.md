@@ -31,6 +31,8 @@ Status key: ✅ built (app compiles and builds; database logic tested on a local
 | kg / lb | ⬜ | Store kg, convert on display and input |
 | Finish summary with comparison and notes | ✅ | "Stronger on X of Y exercises" by estimated 1RM |
 
+| Profile pictures (photo from library or one of 24 drawn avatars) | ✅ | Needs `20261016_avatars.sql` for photo uploads; shown in the header, settings and groups |
+
 ## Phase 3 — Progress tracking
 
 | Feature | Status | Notes |
@@ -72,4 +74,4 @@ Coach tab (middle of the tab bar). Rule-based, from your own data; no AI model o
 ## Known platform limits
 
 - In Expo Go, notifications are local only. A live countdown on the lock screen needs a development build.
-- The ExerciseDB free animations require the in-app credit and non-commercial use until the paid licence is bought.
+- The ExerciseDB free animations require the in-app credit and non-commercial use until the paid licence is bought. The credit was removed from Profile & settings (About) during testing; put it back before the app goes public (it still shows under the exercise picker and exercise info).

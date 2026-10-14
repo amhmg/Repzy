@@ -65,7 +65,8 @@ export default function HomeScreen() {
     setRefreshing(false);
   }
 
-  const name = firstName(profile);
+  const rawName = firstName(profile);
+  const name = rawName ? rawName[0].toUpperCase() + rawName.slice(1) : rawName;
   const draft = session.draft;
   const insight = summary ? trainingInsight(summary) : null;
   const latestPr = summary?.recent_prs[0];
@@ -77,6 +78,7 @@ export default function HomeScreen() {
     <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]} edges={['top']}>
       <AppHeader
         title={name ? `${greeting(today)}, ${name}` : greeting(today)}
+        small
         subtitle={today.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
       />
 
@@ -149,19 +151,31 @@ export default function HomeScreen() {
               {DAY_LETTERS.map((d, i) => {
                 const trained = summary.week_days.includes(i + 1);
                 const isToday = i === todayIndex;
+                const date = new Date(today);
+                date.setDate(today.getDate() - todayIndex + i); // Monday … Sunday of this week
+                const future = i > todayIndex;
                 return (
                   <View key={i} style={styles.dotCol}>
+                    <Text style={[styles.dotLabel, { color: isToday ? c.text : c.subtext }]}>{d}</Text>
                     <View
+                      accessibilityLabel={`${date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' })}${trained ? ', trained' : ''}`}
                       style={[
                         styles.dot,
                         {
                           backgroundColor: trained ? c.accent : c.inputBg,
                           borderColor: isToday ? c.accent : 'transparent',
+                          opacity: future ? 0.55 : 1,
                         },
                       ]}>
-                      {trained && <Text style={styles.dotTick}>✓</Text>}
+                      <Text style={[styles.dotDate, { color: trained ? '#FFFFFF' : isToday ? c.accent : c.text }]}>
+                        {date.getDate()}
+                      </Text>
                     </View>
-                    <Text style={[styles.dotLabel, { color: isToday ? c.text : c.subtext }]}>{d}</Text>
+                    {trained ? (
+                      <Text style={[styles.dotTick, { color: c.accent }]}>✓</Text>
+                    ) : (
+                      <Text style={styles.dotTick}> </Text>
+                    )}
                   </View>
                 );
               })}
@@ -394,8 +408,9 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 12 },
   dots: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
   dotCol: { alignItems: 'center', gap: 4 },
-  dot: { width: 32, height: 32, borderRadius: 16, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  dotTick: { color: '#FFFFFF', fontWeight: '900', fontSize: 14 },
+  dot: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  dotDate: { fontWeight: '800', fontSize: 14 },
+  dotTick: { fontWeight: '900', fontSize: 11, lineHeight: 13 },
   dotLabel: { fontSize: 12, fontWeight: '700' },
   insight: { borderWidth: 1, borderRadius: 14, padding: 14 },
   smallLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },

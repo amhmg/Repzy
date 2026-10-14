@@ -124,3 +124,12 @@ export function relativeTime(iso: string | null) {
   if (days < 7) return `${days}d ago`;
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
+
+// Profile pictures for a set of people (profiles are readable by everyone signed in)
+export async function fetchAvatars(userIds: string[]): Promise<Record<string, string | null>> {
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return {};
+  const { data, error } = await supabase.from('profiles').select('id, avatar_url').in('id', ids);
+  if (error) return {};
+  return Object.fromEntries((data ?? []).map((p: { id: string; avatar_url: string | null }) => [p.id, p.avatar_url]));
+}
