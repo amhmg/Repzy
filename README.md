@@ -1,56 +1,89 @@
-# Welcome to your Expo app 👋
+# Repzy
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+**A smarter way to train, track progress, and improve performance.**
 
-## Get started
+Repzy is a personal fitness application currently under active development. The project aims to combine workout logging, performance analytics, and intelligent training recommendations into a streamlined mobile experience.
 
-1. Install dependencies
+## Project Overview
 
-   ```bash
-   npm install
-   ```
+Repzy is designed to help users organise their workouts, monitor training progress, and make informed decisions about their fitness routines.
 
-2. Start the app
+The long-term goal is to build an intelligent workout companion that goes beyond traditional fitness tracking through personalised recommendations and adaptive training support.
 
-   ```bash
-   npx expo start
-   ```
+## Technology Stack
 
-In the output, you'll find options to open the app in a
+- **Mobile Development:** React Native, Expo
+- **Programming Language:** TypeScript
+- **Backend & Database:** Supabase
+- **Version Control:** Git & GitHub
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Core Features
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+The application is being developed around the following capabilities:
 
-## Get a fresh project
+- **Workout Logging:** Record exercises, sets, repetitions, and weights.
+- **Exercise Management:** Browse and organise exercises.
+- **Workout History:** Review previous training sessions.
+- **Progress Tracking:** Monitor performance and improvements over time.
+- **User Accounts:** Personalised training experience.
+- **Training Groups:** Support shared fitness experiences and community engagement.
 
-When you're ready, run:
+*Features are at different stages of development and are not all necessarily available in the current build.*
+
+## Planned Features
+
+- AI-powered personal training assistance
+- Adaptive progressive overload recommendations
+- Muscle-level performance analytics
+- Intelligent fatigue and recovery management
+- Personalised workout programmes
+- Exercise demonstrations and visual guidance
+- Personal records and achievement tracking
+- Smart rest timers and exercise substitutions
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js
+- npm
+- Expo-compatible development environment
+
+### Installation
+
+Clone the repository:
 
 ```bash
-npm run reset-project
+git clone https://github.com/amhmg/Repzy.git
+cd Repzy
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Install dependencies:
 
-### Other setup steps
+```bash
+npm install
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Start the development server:
 
-## Learn more
+```bash
+npx expo start
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Follow the terminal instructions to launch the application in a supported development environment.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Additional environment configuration may be required for backend services.
 
-## Join the community
+## Development Status
 
-Join our community of developers creating universal apps.
+**Status: Active Development**
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Repzy is an ongoing personal software development project. Features, architecture, and user experience are continuously being refined.
+
+## Developer
+
+Developed by [amhmg](https://github.com/amhmg).
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
