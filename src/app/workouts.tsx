@@ -11,7 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import AppHeader, { ActiveWorkoutBanner } from '@/components/app-header';
 import ExerciseInfo from '@/components/exercise-info';
@@ -167,6 +167,7 @@ export default function WorkoutsScreen() {
 
       {library && (
         <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={() => (infoFor ? setInfoFor(null) : setLibrary(false))}>
+          <SafeAreaProvider>
           <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
             <ExercisePicker
               title="Exercise library"
@@ -176,6 +177,7 @@ export default function WorkoutsScreen() {
             />
             {infoFor && <ExerciseInfo name={infoFor} onClose={() => setInfoFor(null)} />}
           </SafeAreaView>
+          </SafeAreaProvider>
         </Modal>
       )}
     </SafeAreaView>

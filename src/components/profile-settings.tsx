@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import Avatar from '@/components/avatar';
 import AvatarPicker from '@/components/avatar-picker';
@@ -66,6 +66,7 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <SafeAreaProvider>
       <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
         <View style={[styles.header, { borderBottomColor: c.border }]}>
           <View style={styles.headerSide} />
@@ -178,6 +179,7 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
           />
         )}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

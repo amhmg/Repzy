@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import ExerciseInfo from '@/components/exercise-info';
 import ExercisePicker from '@/components/exercise-picker';
@@ -155,6 +155,7 @@ export default function RoutineEditor({
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={() => (picking ? setPicking(false) : close())}>
+      <SafeAreaProvider>
       <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
         {picking ? (
           <ExercisePicker
@@ -244,6 +245,7 @@ export default function RoutineEditor({
         )}
         {infoFor && <ExerciseInfo name={infoFor} onClose={() => setInfoFor(null)} />}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

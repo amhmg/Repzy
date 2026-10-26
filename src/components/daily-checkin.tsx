@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { RepzyColors, useRepzyColors } from '@/constants/repzy-colors';
 import type { DailyLog } from '@/lib/coach/analysis';
@@ -82,6 +82,7 @@ export default function DailyCheckIn({
 
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <SafeAreaProvider>
       <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
         <View style={[styles.header, { borderBottomColor: c.border }]}>
           <Pressable onPress={onClose} hitSlop={10} style={styles.side}>
@@ -131,6 +132,7 @@ export default function DailyCheckIn({
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

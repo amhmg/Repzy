@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import ActionSheet, { SheetAction } from '@/components/action-sheet';
 import ExerciseInfo from '@/components/exercise-info';
@@ -761,6 +761,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={handleBack}>
+      <SafeAreaProvider>
       <GestureHandlerRootView style={styles.flex}>
         <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
           {screen === 'pick' ? (
@@ -1285,6 +1286,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
           )}
         </SafeAreaView>
       </GestureHandlerRootView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

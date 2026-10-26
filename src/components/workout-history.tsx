@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import ExerciseInfo from '@/components/exercise-info';
 import ExerciseThumb from '@/components/exercise-thumb';
@@ -197,6 +197,7 @@ export function WorkoutDetailModal({
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={() => (infoFor ? setInfoFor(null) : onClose())}>
+      <SafeAreaProvider>
       <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
         <WorkoutDetailView
           id={id}
@@ -210,6 +211,7 @@ export function WorkoutDetailModal({
         />
         {infoFor && <ExerciseInfo name={infoFor} onClose={() => setInfoFor(null)} />}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

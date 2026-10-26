@@ -12,7 +12,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import Avatar from '@/components/avatar';
 import ExerciseInfo from '@/components/exercise-info';
@@ -178,6 +178,7 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={handleBack}>
+      <SafeAreaProvider>
       <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
         {openWorkout ? (
           <WorkoutDetailView
@@ -305,6 +306,7 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
 
         {infoFor && <ExerciseInfo name={infoFor} onClose={() => setInfoFor(null)} />}
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

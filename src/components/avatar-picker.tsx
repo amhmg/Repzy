@@ -1,7 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import Avatar from '@/components/avatar';
 import { useRepzyColors } from '@/constants/repzy-colors';
@@ -58,6 +58,7 @@ export default function AvatarPicker({ name, onClose }: { name: string; onClose:
 
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <SafeAreaProvider>
       <SafeAreaView style={[styles.flex, { backgroundColor: c.background }]}>
         <View style={[styles.header, { borderBottomColor: c.border }]}>
           <Pressable onPress={onClose} hitSlop={10} style={styles.side}>
@@ -92,6 +93,7 @@ export default function AvatarPicker({ name, onClose }: { name: string; onClose:
           )}
         </ScrollView>
       </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
