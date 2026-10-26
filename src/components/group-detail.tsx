@@ -297,7 +297,7 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
                     </Text>
                   </View>
                 }
-                ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.loading} /> : null}
+                ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.loading} /> : undefined}
               />
             )}
           </>

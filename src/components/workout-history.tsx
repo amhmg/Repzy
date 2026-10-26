@@ -160,7 +160,7 @@ export default function HistoryList({ reloadKey }: { reloadKey?: number }) {
               </Text>
             </View>
           }
-          ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.loading} /> : null}
+          ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.loading} /> : undefined}
         />
       )}
 

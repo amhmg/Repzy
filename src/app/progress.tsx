@@ -400,7 +400,7 @@ function Records({
             Your best ever per exercise. Heaviest and best set are lifts you did; est. 1RM is calculated from a set (Epley
             formula). Bodyweight-only sets don&apos;t create records yet.
           </Text>
-        ) : null
+        ) : undefined
       }
       renderItem={({ item: group }) => (
         <Pressable
