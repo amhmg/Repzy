@@ -2,9 +2,17 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useState 
 import { Alert } from 'react-native';
 
 import WorkoutLogger from '@/components/workout-logger';
+import * as haptics from '@/lib/haptics';
 import * as Notifications from '@/lib/notifications';
-import { clearDraft, loadDraft, WorkoutDraft } from '@/lib/workout-draft';
-import { clearWorkoutNotifications, RepzyNotificationType } from '@/lib/workout-notifications';
+import { completeNextSet } from '@/lib/quick-set';
+import { clearDraft, loadDraft, saveDraft, WorkoutDraft } from '@/lib/workout-draft';
+import {
+  clearWorkoutNotifications,
+  DONE_SET_ACTION,
+  RepzyNotificationType,
+  scheduleRestDone,
+  showActiveWorkout,
+} from '@/lib/workout-notifications';
 
 // The workout in progress lives here, above the tabs, so it keeps running and can be
 // reopened from any tab. The draft itself is saved on the phone (see workout-draft.ts).
@@ -21,6 +29,9 @@ type WorkoutSessionValue = {
   resume: () => void;
   refreshDraft: () => Promise<WorkoutDraft | null>;
   dismissSaved: () => void;
+  // Ticks off the next set without opening the workout (minimised bar and notification button)
+  completeNextFromShortcut: () => Promise<void>;
+  skipRestFromShortcut: () => Promise<void>;
 };
 
 const WorkoutSessionContext = createContext<WorkoutSessionValue | null>(null);
@@ -30,6 +41,7 @@ export function WorkoutSessionProvider({ userId, children }: { userId: string; c
   const [open, setOpen] = useState<{ key: number; draft: WorkoutDraft | null } | null>(null);
   const [lastSaved, setLastSaved] = useState<SavedSummary | null>(null);
   const [savedVersion, setSavedVersion] = useState(0);
+  const [completeSignal, setCompleteSignal] = useState(0);
 
   const lastResponse = Notifications.useLastNotificationResponse();
 
@@ -43,12 +55,48 @@ export function WorkoutSessionProvider({ userId, children }: { userId: string; c
     refreshDraft();
   }, [refreshDraft]);
 
-  // Tapping the lock-screen notification or rest alert reopens the workout
+  const completeNextFromShortcut = useCallback(async () => {
+    const current = await loadDraft(userId);
+    if (!current) return;
+    const result = completeNextSet(current, Date.now());
+    if (!result.ok) {
+      if (result.reason === 'needs_reps') {
+        // nothing to copy from last time: open the workout so the reps can be typed in
+        setDraft(current);
+        setOpen({ key: Date.now(), draft: current });
+      }
+      return;
+    }
+    await saveDraft(userId, result.draft);
+    setDraft(result.draft);
+    if (result.prTypes.length > 0) haptics.notify(haptics.NotifyType.Success);
+    else haptics.impact(haptics.ImpactStyle.Light);
+    if (result.draft.rest) scheduleRestDone(result.draft.rest.endsAt, result.draft.rest.exerciseName);
+    showActiveWorkout(result.draft);
+  }, [userId]);
+
+  const skipRestFromShortcut = useCallback(async () => {
+    const current = await loadDraft(userId);
+    if (!current?.rest) return;
+    const next = { ...current, rest: null, updatedAt: new Date().toISOString() };
+    await saveDraft(userId, next);
+    setDraft(next);
+    await clearWorkoutNotifications();
+    showActiveWorkout(next);
+  }, [userId]);
+
+  // The notification's "✓ Done set" button ticks off the next set.
+  // Tapping the lock-screen notification or rest alert itself reopens the workout.
   useEffect(() => {
     if (!lastResponse) return;
     const type = lastResponse.notification.request.content.data?.type as RepzyNotificationType | undefined;
     if (type !== 'active' && type !== 'rest') return;
     Notifications.clearLastNotificationResponse();
+    if (lastResponse.actionIdentifier === DONE_SET_ACTION) {
+      if (open) setCompleteSignal((n) => n + 1); // the open workout screen ticks it
+      else completeNextFromShortcut();
+      return;
+    }
     if (open) return;
     loadDraft(userId).then((d) => {
       if (d) {
@@ -56,7 +104,7 @@ export function WorkoutSessionProvider({ userId, children }: { userId: string; c
         setOpen({ key: Date.now(), draft: d });
       }
     });
-  }, [lastResponse, userId, open]);
+  }, [lastResponse, userId, open, completeNextFromShortcut]);
 
   // Starting something new while a workout is in progress asks first
   const confirmReplace = useCallback(
@@ -121,6 +169,8 @@ export function WorkoutSessionProvider({ userId, children }: { userId: string; c
     resume,
     refreshDraft,
     dismissSaved: () => setLastSaved(null),
+    completeNextFromShortcut,
+    skipRestFromShortcut,
   };
 
   return (
@@ -131,13 +181,14 @@ export function WorkoutSessionProvider({ userId, children }: { userId: string; c
           key={open.key}
           userId={userId}
           draft={open.draft}
+          completeNextSignal={completeSignal}
           onDiscard={() => {
             setOpen(null);
             setDraft(null);
           }}
           onMinimize={() => {
             setOpen(null);
-            refreshDraft();
+            refreshDraft().then((d) => d && showActiveWorkout(d));
           }}
           onSaved={({ prCount, title }) => {
             setOpen(null);

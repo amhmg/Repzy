@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useState } from 'react';
 import {
     ActivityIndicator,
@@ -13,9 +14,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 
-type Mode = 'login' | 'signup';
+type Mode = 'login' | 'signup' | 'forgot' | 'reset';
 
 const lightColors = {
   background: '#FFFFFF',
@@ -104,6 +106,9 @@ function friendlyError(message: string) {
   if (message.includes('Email not confirmed')) return 'Please confirm your email first. Check your inbox.';
   if (message.includes('already registered')) return 'An account with this email already exists. Try logging in.';
   if (message.includes('Database error saving new user')) return 'That username is taken.';
+  if (/expired|invalid/i.test(message) && /token|otp|code/i.test(message)) return 'That code is wrong or has expired. Check the latest email, or send a new code.';
+  if (/rate limit|too many|security purposes/i.test(message)) return 'Too many emails sent. Please wait a minute and try again.';
+  if (/same.*password|different from the old/i.test(message)) return 'Choose a password different from your old one.';
   return message;
 }
 
@@ -121,6 +126,12 @@ export default function AuthScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [warnedEmail, setWarnedEmail] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [codeVerified, setCodeVerified] = useState(false);
+  const [resendAt, setResendAt] = useState(0);
+  const { setRecovering } = useAuth();
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -212,6 +223,88 @@ export default function AuthScreen() {
     }
   }
 
+  // ---------- Forgot password: email a code, then set a new password ----------
+
+  async function sendResetCode() {
+    setError(null);
+    setMessage(null);
+    const cleanEmail = email.trim().toLowerCase();
+    if (!EMAIL_PATTERN.test(cleanEmail)) {
+      setError('Please enter the email you signed up with.');
+      return;
+    }
+    if (Date.now() < resendAt) {
+      setError(`Please wait ${Math.ceil((resendAt - Date.now()) / 1000)} seconds before sending another code.`);
+      return;
+    }
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+      if (error) {
+        setError(friendlyError(error.message));
+        return;
+      }
+      setEmail(cleanEmail);
+      setResendAt(Date.now() + 60_000);
+      setCode('');
+      setCodeVerified(false);
+      setMode('reset');
+      // Same message whether or not the account exists, so emails can't be checked for accounts
+      setMessage(`If ${cleanEmail} has a Repzy account, we've emailed it a code. It can take a minute; check spam too.`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resetPassword() {
+    setError(null);
+    setMessage(null);
+    const token = code.replace(/\s/g, '');
+    if (!codeVerified && !/^\d{6,10}$/.test(token)) {
+      setError('Enter the code from the email (numbers only).');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError('Your new password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("The two passwords don't match.");
+      return;
+    }
+    setLoading(true);
+    setRecovering(true); // stay on this screen while the code logs you in
+    try {
+      if (!codeVerified) {
+        const { error } = await supabase.auth.verifyOtp({ email: email.trim().toLowerCase(), token, type: 'recovery' });
+        if (error) {
+          setRecovering(false);
+          setError(friendlyError(error.message));
+          return;
+        }
+        setCodeVerified(true);
+      }
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        setError(friendlyError(error.message));
+        return; // stay here (still verified) so they can try another password
+      }
+      setRecovering(false); // done: go into the app
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function cancelReset() {
+    if (codeVerified) await supabase.auth.signOut();
+    setRecovering(false);
+    setCode('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setCodeVerified(false);
+    switchMode('login');
+  }
+
   const inputStyle = [styles.input, { backgroundColor: c.inputBg, borderColor: c.border, color: c.text }];
 
   return (
@@ -220,9 +313,97 @@ export default function AuthScreen() {
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+          <Image source={require('@/assets/images/logo.png')} style={styles.logoImage} contentFit="contain" />
           <Text style={[styles.logo, { color: c.accent }]}>Repzy</Text>
           <Text style={[styles.tagline, { color: c.subtext }]}>Train together. Stay accountable.</Text>
 
+          {mode === 'forgot' || mode === 'reset' ? (
+            <>
+              <Text style={[styles.heading, { color: c.text }]}>
+                {mode === 'forgot' ? 'Reset your password' : 'Enter your code'}
+              </Text>
+              {mode === 'forgot' ? (
+                <>
+                  <Text style={{ color: c.subtext }}>
+                    Enter your account email and we&apos;ll send you a code to set a new password.
+                  </Text>
+                  <TextInput
+                    style={inputStyle}
+                    placeholder="Email"
+                    placeholderTextColor={c.subtext}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    textContentType="emailAddress"
+                    value={email}
+                    onChangeText={setEmail}
+                    onSubmitEditing={sendResetCode}
+                  />
+                </>
+              ) : (
+                <>
+                  {!codeVerified && (
+                    <TextInput
+                      style={[inputStyle, styles.codeInput]}
+                      placeholder="Code from email"
+                      placeholderTextColor={c.subtext}
+                      keyboardType="number-pad"
+                      textContentType="oneTimeCode"
+                      autoComplete="one-time-code"
+                      maxLength={10}
+                      value={code}
+                      onChangeText={(t) => setCode(t.replace(/[^0-9]/g, ''))}
+                    />
+                  )}
+                  <TextInput
+                    style={inputStyle}
+                    placeholder="New password (8+ characters)"
+                    placeholderTextColor={c.subtext}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    textContentType="newPassword"
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                  />
+                  <TextInput
+                    style={inputStyle}
+                    placeholder="Confirm new password"
+                    placeholderTextColor={c.subtext}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    textContentType="newPassword"
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    onSubmitEditing={resetPassword}
+                  />
+                </>
+              )}
+
+              {error && <Text style={[styles.feedback, { color: c.error }]}>{error}</Text>}
+              {message && <Text style={[styles.feedback, { color: c.success }]}>{message}</Text>}
+
+              <Pressable
+                onPress={mode === 'forgot' ? sendResetCode : resetPassword}
+                disabled={loading}
+                style={({ pressed }) => [styles.button, { backgroundColor: c.accent, opacity: pressed || loading ? 0.7 : 1 }]}>
+                {loading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>{mode === 'forgot' ? 'Send code' : 'Save new password'}</Text>
+                )}
+              </Pressable>
+
+              {mode === 'reset' && !codeVerified && (
+                <Pressable onPress={sendResetCode} disabled={loading} style={styles.centerLink}>
+                  <Text style={[styles.switchLink, { color: c.accent }]}>Send a new code</Text>
+                </Pressable>
+              )}
+              <Pressable onPress={cancelReset} style={styles.centerLink}>
+                <Text style={{ color: c.subtext }}>‹ Back to log in</Text>
+              </Pressable>
+            </>
+          ) : (
+          <>
           <Text style={[styles.heading, { color: c.text }]}>
             {mode === 'login' ? 'Welcome back' : 'Create your account'}
           </Text>
@@ -279,6 +460,12 @@ export default function AuthScreen() {
             onSubmitEditing={handleSubmit}
           />
 
+          {mode === 'login' && (
+            <Pressable onPress={() => switchMode('forgot')} hitSlop={8} style={styles.forgotLink}>
+              <Text style={{ color: c.accent, fontWeight: '600' }}>Forgot password?</Text>
+            </Pressable>
+          )}
+
           {error && <Text style={[styles.feedback, { color: c.error }]}>{error}</Text>}
           {message && <Text style={[styles.feedback, { color: c.success }]}>{message}</Text>}
 
@@ -306,6 +493,8 @@ export default function AuthScreen() {
               </Text>
             </Pressable>
           </View>
+          </>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -322,6 +511,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   logo: { fontSize: 44, fontWeight: '800', textAlign: 'center', letterSpacing: -1 },
+  logoImage: { width: 110, height: 110, alignSelf: 'center' },
+  codeInput: { fontSize: 22, letterSpacing: 4, textAlign: 'center' },
+  forgotLink: { alignSelf: 'flex-end' },
+  centerLink: { alignSelf: 'center', paddingVertical: 6 },
   tagline: { fontSize: 15, textAlign: 'center', marginBottom: 24 },
   heading: { fontSize: 22, fontWeight: '700', marginBottom: 4 },
   input: {

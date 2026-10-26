@@ -11,6 +11,7 @@ export { dismissNotificationAsync } from 'expo-notifications/build/dismissNotifi
 export { getPresentedNotificationsAsync } from 'expo-notifications/build/getPresentedNotificationsAsync';
 export { getPermissionsAsync, requestPermissionsAsync } from 'expo-notifications/build/NotificationPermissions';
 export { setNotificationHandler } from 'expo-notifications/build/NotificationsHandler';
+export { setNotificationCategoryAsync } from 'expo-notifications/build/setNotificationCategoryAsync';
 export { clearLastNotificationResponse } from 'expo-notifications/build/NotificationsEmitter';
 export { scheduleNotificationAsync } from 'expo-notifications/build/scheduleNotificationAsync';
 export { setNotificationChannelAsync } from 'expo-notifications/build/setNotificationChannelAsync';

@@ -27,6 +27,7 @@ import { CoachExercise, epley, recommendNext, Recommendation } from '@/lib/coach
 import { findLibraryExercise } from '@/lib/exercise-library';
 import { fetchMyGroups, GroupSummary } from '@/lib/groups';
 import * as haptics from '@/lib/haptics';
+import { findNextSet, markPRs, setTypeOf } from '@/lib/quick-set';
 import { getSettings, useSettings } from '@/lib/settings';
 import { supabase } from '@/lib/supabase';
 import {
@@ -75,6 +76,7 @@ type Props = {
   onDiscard: () => void;
   onMinimize: () => void;
   onSaved: (summary: { prCount: number; title: string }) => void;
+  completeNextSignal?: number; // bumps when the notification's "✓ Done set" button is pressed
 };
 
 // ---------- Helpers ----------
@@ -94,10 +96,6 @@ const SET_TYPES: { type: SetType; label: string; short: string; detail: string }
   { type: 'backoff', label: 'Back-off', short: 'B', detail: 'Lighter set after your top set' },
 ];
 const RPE_VALUES = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
-
-function setTypeOf(s: { type?: SetType }): SetType {
-  return s.type ?? 'normal';
-}
 
 // Best estimated 1RM of non-warm-up weighted sets (for "vs last time")
 function bestE1rm(sets: { weight: number | null; reps: number | null; type?: SetType }[]) {
@@ -134,31 +132,6 @@ function formatRepRange(min: number | null, max: number | null) {
 function formatPrevious(p?: PreviousSet) {
   if (!p || p.reps == null) return '–';
   return p.weight != null && Number(p.weight) > 0 ? `${Number(p.weight)} × ${p.reps}` : `${p.reps} reps`;
-}
-
-// Works out which ticked sets are PRs, from scratch every time.
-// Compares each ticked set (top to bottom) against your saved best plus the
-// ticked sets above it. Unticking a set removes it from the comparison entirely.
-function markPRs(ex: LoggedExercise): LoggedExercise {
-  const running: Bests = { ...ex.historicBest };
-  const sets = ex.sets.map((s) => {
-    if (!s.done || setTypeOf(s) === 'warmup') return { ...s, prTypes: [] };
-    const weight = parseNumber(s.weight);
-    const reps = parseNumber(s.reps);
-    if (!weight || weight <= 0 || !reps || reps <= 0) return { ...s, prTypes: [] };
-
-    const values = recordValues(weight, Math.round(reps));
-    const improved: RecordType[] = [];
-    for (const type of RECORD_TYPES) {
-      const current = running[type];
-      if (current === undefined || values[type] > current) {
-        if (ex.hasHistory && current !== undefined) improved.push(type);
-        running[type] = values[type];
-      }
-    }
-    return { ...s, prTypes: improved };
-  });
-  return { ...ex, sets };
 }
 
 // ---------- PR celebration ----------
@@ -213,7 +186,7 @@ function PRCelebration({
 
 // ---------- Main screen ----------
 
-export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, onSaved }: Props) {
+export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, onSaved, completeNextSignal = 0 }: Props) {
   const c = useRepzyColors();
 
   const [startedAt] = useState(() => (draft ? new Date(draft.startedAt) : new Date()));
@@ -327,12 +300,32 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
     exercises[exercises.length - 1]?.name ??
     null;
 
+  // What the lock-screen notification shows: the next set and its numbers, plus the rest end time
+  const upcoming = findNextSet(buildDraft());
+  const nextSetKey = upcoming
+    ? `${upcoming.exerciseName}|${upcoming.label}|${upcoming.weight}|${upcoming.reps}|${doneSets.length}`
+    : `done|${doneSets.length}`;
+
   // Keep the lock-screen "Workout in progress" notification up to date
   useEffect(() => {
     if (finished.current) return;
-    showActiveWorkout({ startedAt, doneSets: doneSets.length, currentExercise });
+    // wait until typing stops, so the notification isn't replaced on every keystroke
+    const t = setTimeout(() => {
+      if (!finished.current) showActiveWorkout(buildDraft());
+    }, 900);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doneSets.length, currentExercise]);
+  }, [nextSetKey, rest?.endsAt]);
+
+  // "✓ Done set" on the lock-screen notification while this screen is open: tick the next set
+  const lastSignal = useRef(completeNextSignal);
+  useEffect(() => {
+    if (completeNextSignal === lastSignal.current) return;
+    lastSignal.current = completeNextSignal;
+    const next = findNextSet(buildDraft());
+    if (next) toggleSet(exercises[next.exerciseIndex], next.setIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [completeNextSignal]);
 
   // Load groups for the "share to group" option once you reach the finish screen
   useEffect(() => {

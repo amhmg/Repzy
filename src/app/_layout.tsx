@@ -2,9 +2,9 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { ActivityIndicator, useColorScheme, View } from 'react-native';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import AuthScreen from '@/components/auth-screen';
+import RepzySplash from '@/components/repzy-splash';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { ProfileProvider } from '@/lib/profile';
 import { SettingsProvider } from '@/lib/settings';
@@ -13,7 +13,7 @@ import { WorkoutSessionProvider } from '@/lib/workout-session';
 SplashScreen.preventAutoHideAsync();
 
 function RootContent() {
-  const { session, loading } = useAuth();
+  const { session, loading, recovering } = useAuth();
 
   if (loading) {
     return (
@@ -23,7 +23,7 @@ function RootContent() {
     );
   }
 
-  if (!session) return <AuthScreen />;
+  if (!session || recovering) return <AuthScreen />;
 
   const userId = session.user.id;
   // key={userId}: switching accounts starts every provider fresh, so no data leaks between accounts
@@ -43,8 +43,8 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <AnimatedSplashOverlay />
         <RootContent />
+        <RepzySplash />
       </ThemeProvider>
     </AuthProvider>
   );

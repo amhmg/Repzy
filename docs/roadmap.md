@@ -33,6 +33,11 @@ Status key: ✅ built (app compiles and builds; database logic tested on a local
 
 | Profile picture from your photo library | ✅ | Needs `20261016_avatars.sql`; shown in the header, settings and groups; initials if none |
 
+| Minimised workout bar: next set, live rest countdown, ✓ to tick the set, skip rest | ✅ | Works in Expo Go |
+| Lock-screen notification: next set + rest end time, "✓ Done set" button | ✅ | Button opens Repzy briefly to tick the set. A live countdown on the lock screen / Dynamic Island (Live Activity) needs a development build |
+| Forgot password (6-digit email code) | ✅ | Needs the Reset Password email template from `supabase/email-templates/reset-password.html` |
+| New logo, app icon and opening animation | ✅ | |
+
 ## Phase 3 — Progress tracking
 
 | Feature | Status | Notes |
