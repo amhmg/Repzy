@@ -326,7 +326,7 @@ begin
     array(select distinct k from unnest(coalesce(old_keys, '{}') || coalesce(new_keys, '{}')) as k)
   );
 
-  -- PR count for this workout = records it now holds
+  -- PR count (changed by the 20261028 fix to count only sets that beat earlier workouts)
   update public.workouts
   set pr_count = (select count(*) from public.personal_records where user_id = uid and workout_id = p_workout_id)
   where id = p_workout_id;
