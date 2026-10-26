@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { removeWorkoutPhoto } from '@/lib/workout-photo';
 import { RecordType } from '@/lib/workout';
 
 export type WorkoutSummary = {
@@ -14,6 +15,7 @@ export type WorkoutSummary = {
   volume: number;
   exercise_names: string[];
   pr_count: number;
+  photo_url?: string | null;
 };
 
 export type HistorySet = {
@@ -32,6 +34,9 @@ export type WorkoutDetail = {
   created_at: string;
   duration_minutes: number | null;
   notes?: string | null;
+  photo_url?: string | null;
+  group_id?: string | null;
+  ended_at?: string | null;
   exercises: {
     id: string;
     name: string;
@@ -72,18 +77,53 @@ export async function fetchWorkoutHistory(before?: string, options?: { search?: 
     search ? { p_limit: limit, p_before: before ?? null, p_search: search } : { p_limit: limit, p_before: before ?? null },
   );
   if (error) throw error;
-  const rows = ((data ?? []) as WorkoutSummary[]).map((w) => ({ ...w, volume: Number(w.volume) }));
+  const rows = await attachPhotos(((data ?? []) as WorkoutSummary[]).map((w) => ({ ...w, volume: Number(w.volume) })));
   return { rows, hasMore: rows.length === limit };
 }
 
+const DETAIL_SELECT_PHOTO =
+  'id, title, notes, photo_url, group_id, visibility, started_at, ended_at, created_at, duration_minutes, exercises(id, name, order_index, rest_seconds, notes, sets(set_number, weight, reps, set_type, rpe))';
 const DETAIL_SELECT =
-  'id, title, notes, visibility, started_at, created_at, duration_minutes, exercises(id, name, order_index, rest_seconds, notes, sets(set_number, weight, reps, set_type, rpe))';
+  'id, title, notes, group_id, visibility, started_at, ended_at, created_at, duration_minutes, exercises(id, name, order_index, rest_seconds, notes, sets(set_number, weight, reps, set_type, rpe))';
 // Used if the set-types update hasn't been installed in the database yet
 const DETAIL_SELECT_OLD =
   'id, title, notes, visibility, started_at, created_at, duration_minutes, exercises(id, name, order_index, rest_seconds, sets(set_number, weight, reps))';
 
+// Adds each workout's photo (one extra query). Missing photos or an old database just mean no photo.
+export async function attachPhotos<T extends { id: string; photo_url?: string | null }>(rows: T[]): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  const { data, error } = await supabase.from('workouts').select('id, photo_url').in('id', rows.map((r) => r.id));
+  if (error || !data) return rows;
+  const photos = new Map((data as { id: string; photo_url: string | null }[]).map((r) => [r.id, r.photo_url]));
+  return rows.map((r) => ({ ...r, photo_url: photos.get(r.id) ?? null }));
+}
+
+export type WorkoutEditPayload = {
+  title: string;
+  notes: string | null;
+  visibility: 'private' | 'group' | 'public';
+  group_id: string | null;
+  photo_url: string | null;
+  exercises: { name: string; rest_seconds: number; notes: string | null; sets: { weight: number | null; reps: number; type: string; rpe: number | null }[] }[];
+};
+
+export async function updateWorkout(id: string, payload: WorkoutEditPayload) {
+  const { data, error } = await supabase.rpc('update_workout', { p_workout_id: id, payload });
+  if (error) {
+    if (/update_workout/.test(error.message) && /function|schema cache/i.test(error.message)) {
+      throw new Error('Editing workouts needs the latest database update. Run the SQL from the update notes first.');
+    }
+    throw error;
+  }
+  return data as { workout_id: string; pr_count: number };
+}
+
 export async function fetchWorkoutDetail(id: string): Promise<WorkoutDetail> {
-  let res = await supabase.from('workouts').select(DETAIL_SELECT).eq('id', id).single();
+  // Newest columns first; fall back if a database update hasn't been installed yet
+  let res = await supabase.from('workouts').select(DETAIL_SELECT_PHOTO).eq('id', id).single();
+  if (res.error && res.error.code !== 'PGRST116') {
+    res = await supabase.from('workouts').select(DETAIL_SELECT).eq('id', id).single();
+  }
   if (res.error && res.error.code !== 'PGRST116') {
     res = await supabase.from('workouts').select(DETAIL_SELECT_OLD).eq('id', id).single();
   }
@@ -108,9 +148,10 @@ export async function fetchWorkoutDetail(id: string): Promise<WorkoutDetail> {
   };
 }
 
-export async function deleteWorkout(id: string) {
+export async function deleteWorkout(id: string, photoUrl?: string | null) {
   const { error } = await supabase.rpc('delete_workout', { p_workout_id: id });
   if (error) throw error;
+  if (photoUrl) await removeWorkoutPhoto(photoUrl);
 }
 
 export async function fetchExerciseHistory(name: string): Promise<ExerciseSession[]> {

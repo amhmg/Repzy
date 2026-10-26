@@ -1,3 +1,4 @@
+import { attachPhotos } from '@/lib/history';
 import { supabase } from '@/lib/supabase';
 
 export type GroupSummary = {
@@ -34,6 +35,7 @@ export type GroupFeedItem = {
   volume: number;
   exercise_names: string[];
   pr_count: number;
+  photo_url?: string | null;
 };
 
 const FEED_PAGE = 20;
@@ -101,7 +103,7 @@ export async function fetchGroupFeed(groupId: string, before?: string) {
     p_before: before ?? null,
   });
   if (error) throw error;
-  const rows = ((data ?? []) as GroupFeedItem[]).map((w) => ({ ...w, volume: Number(w.volume) }));
+  const rows = await attachPhotos(((data ?? []) as GroupFeedItem[]).map((w) => ({ ...w, volume: Number(w.volume) })));
   return { rows, hasMore: rows.length === FEED_PAGE };
 }
 

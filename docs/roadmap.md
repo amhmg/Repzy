@@ -45,7 +45,8 @@ Status key: ✅ built (app compiles and builds; database logic tested on a local
 | History search | ✅ | Title and exercise names |
 | Repeat (duplicate) a past workout | ✅ | |
 | History sort and date filters | ⬜ | |
-| Edit a completed workout (with PR recalculation) | ⬜ | `delete_workout` already recalculates PRs; edit will reuse it |
+| Edit a completed workout (with PR recalculation) | ✅ | Workout → ✏️ Edit workout. Needs `20261027_workout_photos_edit.sql` |
+| Workout photo | ✅ | Add on the finish screen or when editing; shown in history, Home and group feed |
 | Exercise charts with timeframes | 🟡 | Last 10 sessions; 30d/90d/1y/all to add |
 | Rep-specific PRs, PR history | ⬜ | |
 | Weekly sets by muscle group | ✅ | Counts each set to the exercise's main muscle group (labelled as an estimate) |

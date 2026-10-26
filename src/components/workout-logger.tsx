@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -28,6 +29,8 @@ import { findLibraryExercise } from '@/lib/exercise-library';
 import { fetchMyGroups, GroupSummary } from '@/lib/groups';
 import * as haptics from '@/lib/haptics';
 import { findNextSet, markPRs, setTypeOf } from '@/lib/quick-set';
+import { formatDuration, updateWorkout } from '@/lib/history';
+import { pickWorkoutPhoto, removeWorkoutPhoto, uploadWorkoutPhoto } from '@/lib/workout-photo';
 import { getSettings, useSettings } from '@/lib/settings';
 import { supabase } from '@/lib/supabase';
 import {
@@ -77,6 +80,9 @@ type Props = {
   onMinimize: () => void;
   onSaved: (summary: { prCount: number; title: string }) => void;
   completeNextSignal?: number; // bumps when the notification's "✓ Done set" button is pressed
+  // Editing a finished workout instead of logging a new one
+  edit?: { workoutId: string; photoUrl: string | null; durationMinutes: number | null };
+  onEdited?: () => void;
 };
 
 // ---------- Helpers ----------
@@ -186,7 +192,17 @@ function PRCelebration({
 
 // ---------- Main screen ----------
 
-export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, onSaved, completeNextSignal = 0 }: Props) {
+export default function WorkoutLogger({
+  userId,
+  draft,
+  onDiscard,
+  onMinimize,
+  onSaved,
+  completeNextSignal = 0,
+  edit,
+  onEdited,
+}: Props) {
+  const isEdit = !!edit;
   const c = useRepzyColors();
 
   const [startedAt] = useState(() => (draft ? new Date(draft.startedAt) : new Date()));
@@ -207,6 +223,10 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [workoutNotes, setWorkoutNotes] = useState(() => draft?.notes ?? '');
+  // Photo: the one already saved (editing), or a new one picked on the finish screen
+  const [photo, setPhoto] = useState<{ uri: string; base64?: string } | null>(() =>
+    edit?.photoUrl ? { uri: edit.photoUrl } : null,
+  );
 
   const { settings } = useSettings();
   const [setSheet, setSetSheet] = useState<{ exId: string; setId: string } | null>(null);
@@ -234,6 +254,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
   // Ask for notification permission when the first workout starts, and
   // re-arm the rest alarm if we're resuming mid-rest
   useEffect(() => {
+    if (isEdit) return;
     setupWorkoutNotifications();
     if (rest) scheduleRestDone(rest.endsAt, rest.exerciseName);
     // Exercises that were still loading their history when the app closed
@@ -272,6 +293,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
       notes: workoutNotes,
       updatedAt: new Date().toISOString(),
     };
+    if (isEdit) return; // edits aren't the workout in progress
     const timer = setTimeout(() => {
       if (!finished.current) saveDraft(userId, draftNow);
     }, 300);
@@ -308,7 +330,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
 
   // Keep the lock-screen "Workout in progress" notification up to date
   useEffect(() => {
-    if (finished.current) return;
+    if (finished.current || isEdit) return;
     // wait until typing stops, so the notification isn't replaced on every keystroke
     const t = setTimeout(() => {
       if (!finished.current) showActiveWorkout(buildDraft());
@@ -610,7 +632,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
       haptics.impact(haptics.ImpactStyle.Light);
     }
 
-    if (ex.restSeconds > 0) {
+    if (ex.restSeconds > 0 && !isEdit) {
       const endsAt = Date.now() + ex.restSeconds * 1000;
       setRest({ endsAt, total: ex.restSeconds, exerciseName: ex.name });
       scheduleRestDone(endsAt, ex.name);
@@ -646,6 +668,13 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
   }
 
   function confirmCancel() {
+    if (isEdit) {
+      Alert.alert('Stop editing?', 'Your changes to this workout won’t be saved.', [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Discard changes', style: 'destructive', onPress: onDiscard },
+      ]);
+      return;
+    }
     if (exercises.length === 0) {
       discard();
       return;
@@ -681,6 +710,15 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
     }
   }
 
+  async function choosePhoto() {
+    try {
+      const picked = await pickWorkoutPhoto();
+      if (picked) setPhoto(picked);
+    } catch (e: any) {
+      Alert.alert('Could not add photo', e?.message ?? 'Please try another photo.');
+    }
+  }
+
   function startFinish() {
     if (doneSets.length === 0) {
       Alert.alert('Nothing to save yet', 'Tick off at least one set first.');
@@ -699,6 +737,18 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
     setSaving(true);
     setSaveError(null);
 
+    // Upload a newly picked photo first, so the workout can link to it
+    let photoUrl: string | null = photo && !photo.base64 ? photo.uri : null;
+    if (photo?.base64) {
+      try {
+        photoUrl = await uploadWorkoutPhoto(photo.base64);
+      } catch (e: any) {
+        setSaving(false);
+        setSaveError(e?.message ?? 'Could not upload the photo.');
+        return;
+      }
+    }
+
     const payload = {
       title: title.trim(),
       visibility,
@@ -706,6 +756,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
       started_at: startedAt.toISOString(),
       ended_at: new Date().toISOString(),
       notes: workoutNotes.trim() || null,
+      photo_url: photoUrl,
       exercises: exercises
         .map((ex) => ({
           name: ex.name,
@@ -723,10 +774,34 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
         .filter((ex) => ex.sets.length > 0),
     };
 
+    if (edit) {
+      try {
+        await updateWorkout(edit.workoutId, {
+          title: payload.title,
+          notes: payload.notes,
+          visibility: payload.visibility,
+          group_id: payload.group_id,
+          photo_url: photoUrl,
+          exercises: payload.exercises,
+        });
+      } catch (e: any) {
+        setSaving(false);
+        if (photo?.base64) removeWorkoutPhoto(photoUrl); // don't leave the new upload behind
+        setSaveError(e?.message ?? 'Could not save your changes.');
+        return;
+      }
+      setSaving(false);
+      if (edit.photoUrl && edit.photoUrl !== photoUrl) removeWorkoutPhoto(edit.photoUrl);
+      finished.current = true;
+      onEdited?.();
+      return;
+    }
+
     const { error } = await supabase.rpc('save_workout', { payload });
     setSaving(false);
 
     if (error) {
+      if (photo?.base64) removeWorkoutPhoto(photoUrl);
       setSaveError(error.message);
       return;
     }
@@ -785,7 +860,9 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                   </Text>
                 </Pressable>
                 <View style={styles.headerCenter}>
-                  <Text style={[styles.headerTimer, { color: c.text }]}>{formatClock(elapsed)}</Text>
+                  <Text style={[styles.headerTimer, { color: c.text }]}>
+                    {isEdit ? 'Edit workout' : formatClock(elapsed)}
+                  </Text>
                   <Text style={[styles.headerStats, { color: c.subtext }]}>
                     {doneSets.length} sets · {formatKg(totalVolume)}
                   </Text>
@@ -794,7 +871,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                   <View style={styles.headerSpacer} />
                 ) : (
                   <Pressable onPress={startFinish} style={[styles.finishButton, { backgroundColor: c.accent }]}>
-                    <Text style={styles.finishText}>Finish</Text>
+                    <Text style={styles.finishText}>{isEdit ? 'Done' : 'Finish'}</Text>
                   </Pressable>
                 )}
               </View>
@@ -802,16 +879,20 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
               {screen === 'finish' ? (
                 /* ---------- Finish screen ---------- */
                 <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-                  <Text style={[styles.finishHeading, { color: c.text }]}>Nice work 💪</Text>
+                  <Text style={[styles.finishHeading, { color: c.text }]}>{isEdit ? 'Save your changes' : 'Nice work 💪'}</Text>
 
                   <View style={[styles.summaryRow, { backgroundColor: c.card }]}>
-                    <Summary label="Time" value={formatClock(elapsed)} colors={c} />
+                    <Summary
+                      label="Time"
+                      value={isEdit ? formatDuration(edit?.durationMinutes ?? null) : formatClock(elapsed)}
+                      colors={c}
+                    />
                     <Summary label="Sets" value={String(doneSets.length)} colors={c} />
                     <Summary label="Volume" value={formatKg(totalVolume)} colors={c} />
-                    <Summary label="PRs" value={prCount > 0 ? `🏆 ${prCount}` : '0'} colors={c} />
+                    {!isEdit && <Summary label="PRs" value={prCount > 0 ? `🏆 ${prCount}` : '0'} colors={c} />}
                   </View>
 
-                  {comparisons.length > 0 && (
+                  {!isEdit && comparisons.length > 0 && (
                     <View style={[styles.compareCard, { backgroundColor: c.card }]}>
                       <Text style={[styles.compareTitle, { color: c.text }]}>
                         Stronger on {improved} of {comparisons.length} exercise{comparisons.length === 1 ? '' : 's'} vs last time
@@ -835,6 +916,28 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                         Compared by best estimated 1RM per exercise. Warm-ups don&apos;t count.
                       </Text>
                     </View>
+                  )}
+
+                  <Text style={[styles.label, { color: c.subtext }]}>Photo</Text>
+                  {photo ? (
+                    <View style={styles.photoWrap}>
+                      <Image source={{ uri: photo.uri }} style={styles.photo} contentFit="cover" />
+                      <View style={styles.photoActions}>
+                        <Pressable onPress={choosePhoto} style={[styles.photoButton, { backgroundColor: c.inputBg }]}>
+                          <Text style={{ color: c.text, fontWeight: '700' }}>Change</Text>
+                        </Pressable>
+                        <Pressable onPress={() => setPhoto(null)} style={[styles.photoButton, { backgroundColor: c.inputBg }]}>
+                          <Text style={{ color: c.error, fontWeight: '700' }}>Remove</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <Pressable
+                      onPress={choosePhoto}
+                      style={({ pressed }) => [styles.addPhoto, { borderColor: c.border, opacity: pressed ? 0.6 : 1 }]}>
+                      <Text style={{ color: c.text, fontWeight: '700', fontSize: 15 }}>📷 Add a photo</Text>
+                      <Text style={{ color: c.subtext, fontSize: 12 }}>Optional · shows on your workout and in groups</Text>
+                    </Pressable>
                   )}
 
                   <Text style={[styles.label, { color: c.subtext }]}>Title</Text>
@@ -919,7 +1022,7 @@ export default function WorkoutLogger({ userId, draft, onDiscard, onMinimize, on
                     {saving ? (
                       <ActivityIndicator color="#FFFFFF" />
                     ) : (
-                      <Text style={styles.saveText}>Save workout</Text>
+                      <Text style={styles.saveText}>{isEdit ? 'Save changes' : 'Save workout'}</Text>
                     )}
                   </Pressable>
                 </ScrollView>
@@ -1499,6 +1602,11 @@ const styles = StyleSheet.create({
   summaryLabel: { fontSize: 12 },
   label: { fontSize: 13, fontWeight: '600', marginBottom: -6 },
   visibilityRow: { flexDirection: 'row', gap: 8 },
+  addPhoto: { borderWidth: 1.5, borderStyle: 'dashed', borderRadius: 14, paddingVertical: 18, alignItems: 'center', gap: 4 },
+  photoWrap: { gap: 8 },
+  photo: { width: '100%', aspectRatio: 4 / 5, borderRadius: 14 },
+  photoActions: { flexDirection: 'row', gap: 8 },
+  photoButton: { flex: 1, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
   visibilityOption: {
     flex: 1,
     borderWidth: 1.5,

@@ -38,3 +38,10 @@ export function newId() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+
+// Who can see a workout, as shown everywhere in the app
+export const VISIBILITY_LABEL = {
+  private: '🔒 Only me',
+  group: '👥 Group',
+  public: '🌍 Public',
+} as const;

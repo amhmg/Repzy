@@ -33,12 +33,14 @@ import {
   WorkoutDetail,
   WorkoutSummary,
 } from '@/lib/history';
+import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
-import { estimateOneRepMax, formatKg } from '@/lib/workout';
-import { draftFromWorkout } from '@/lib/workout-draft';
+import { estimateOneRepMax, formatKg, VISIBILITY_LABEL } from '@/lib/workout';
+import { draftForEdit, draftFromWorkout } from '@/lib/workout-draft';
+import WorkoutLogger from '@/components/workout-logger';
+import { Image } from 'expo-image';
 import { useWorkoutSession } from '@/lib/workout-session';
 
-const VISIBILITY_ICON = { private: '🔒', group: '👥', public: '🌍' } as const;
 
 // The History list inside Progress: searchable, grouped by month, newest first.
 export default function HistoryList({ reloadKey }: { reloadKey?: number }) {
@@ -185,12 +187,14 @@ export function WorkoutDetailModal({
   onDeleted,
   canDelete = true,
   ownerLabel,
+  onEdited,
 }: {
   id: string;
   onClose: () => void;
   onDeleted?: () => void;
   canDelete?: boolean;
   ownerLabel?: string;
+  onEdited?: () => void;
 }) {
   const c = useRepzyColors();
   const [infoFor, setInfoFor] = useState<string | null>(null);
@@ -208,6 +212,7 @@ export function WorkoutDetailModal({
           onRepeatStarted={onClose}
           canDelete={canDelete}
           ownerLabel={ownerLabel}
+          onEdited={onEdited}
         />
         {infoFor && <ExerciseInfo name={infoFor} onClose={() => setInfoFor(null)} />}
       </SafeAreaView>
@@ -240,7 +245,9 @@ export function WorkoutCard({
         <Text style={[styles.cardTitle, { color: c.text }]} numberOfLines={1}>
           {workout.title || 'Workout'}
         </Text>
-        <Text style={styles.cardIcon}>{VISIBILITY_ICON[workout.visibility]}</Text>
+        <View style={[styles.visPill, { backgroundColor: c.inputBg }]}>
+          <Text style={[styles.visPillText, { color: c.subtext }]}>{VISIBILITY_LABEL[workout.visibility]}</Text>
+        </View>
       </View>
       <Text style={[styles.cardDate, { color: c.subtext }]}>
         {formatDay(date)} · {formatTime(date)}
@@ -263,6 +270,9 @@ export function WorkoutCard({
           {extra}
         </Text>
       )}
+      {workout.photo_url ? (
+        <Image source={{ uri: workout.photo_url }} style={styles.cardPhoto} contentFit="cover" transition={150} />
+      ) : null}
     </Pressable>
   );
 }
@@ -278,6 +288,7 @@ export function WorkoutDetailView({
   canDelete = true,
   ownerLabel,
   onRepeatStarted,
+  onEdited,
 }: {
   id: string;
   colors: RepzyColors;
@@ -287,18 +298,22 @@ export function WorkoutDetailView({
   canDelete?: boolean; // false when viewing someone else's workout
   ownerLabel?: string; // e.g. "@sam", shown under the title
   onRepeatStarted?: () => void; // close whatever is showing this, so the workout is visible
+  onEdited?: () => void;
 }) {
   const session = useWorkoutSession();
+  const auth = useAuth();
   const { settings } = useSettings();
   const [detail, setDetail] = useState<WorkoutDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     fetchWorkoutDetail(id)
       .then(setDetail)
       .catch((e) => setError(e.message ?? 'Could not load this workout'));
-  }, [id]);
+  }, [id, version]);
 
   function confirmDelete() {
     Alert.alert(
@@ -312,7 +327,7 @@ export function WorkoutDetailView({
           onPress: async () => {
             setDeleting(true);
             try {
-              await deleteWorkout(id);
+              await deleteWorkout(id, detail?.photo_url);
               onDeleted?.();
             } catch (e: any) {
               setDeleting(false);
@@ -347,11 +362,15 @@ export function WorkoutDetailView({
           <Text style={[styles.detailTitle, { color: c.text }]}>{detail.title || 'Workout'}</Text>
           {ownerLabel ? <Text style={{ color: c.accent, fontWeight: '700' }}>{ownerLabel}</Text> : null}
           <Text style={{ color: c.subtext }}>
-            {formatFullDate(date)} · {formatTime(date)} · {VISIBILITY_ICON[detail.visibility]}
+            {formatFullDate(date)} · {formatTime(date)} · {VISIBILITY_LABEL[detail.visibility]}
           </Text>
 
           {detail.notes ? (
             <Text style={{ color: c.text, fontStyle: 'italic' }}>📝 {detail.notes}</Text>
+          ) : null}
+
+          {detail.photo_url ? (
+            <Image source={{ uri: detail.photo_url }} style={styles.detailPhoto} contentFit="cover" transition={150} />
           ) : null}
 
           <View style={[styles.summary, { backgroundColor: c.card }]}>
@@ -404,6 +423,14 @@ export function WorkoutDetailView({
             );
           })}
 
+          {canDelete && (
+            <Pressable
+              onPress={() => setEditing(true)}
+              style={({ pressed }) => [styles.editButton, { borderColor: c.accent, opacity: pressed ? 0.7 : 1 }]}>
+              <Text style={{ color: c.accent, fontWeight: '800', fontSize: 16 }}>✏️ Edit workout</Text>
+            </Pressable>
+          )}
+
           <Pressable
             onPress={() => {
               session.startWith(draftFromWorkout(detail, settings.defaultRestSeconds));
@@ -426,6 +453,23 @@ export function WorkoutDetailView({
           </Pressable>
           )}
         </ScrollView>
+      )}
+
+      {editing && detail && session && (
+        <WorkoutLogger
+          userId={auth.session?.user.id ?? ''}
+          draft={draftForEdit(detail, settings.defaultRestSeconds)}
+          edit={{ workoutId: detail.id, photoUrl: detail.photo_url ?? null, durationMinutes: detail.duration_minutes }}
+          onDiscard={() => setEditing(false)}
+          onMinimize={() => setEditing(false)}
+          onSaved={() => setEditing(false)}
+          onEdited={() => {
+            setEditing(false);
+            setVersion((v) => v + 1);
+            onEdited?.();
+            session.markChanged();
+          }}
+        />
       )}
     </>
   );
@@ -466,7 +510,11 @@ const styles = StyleSheet.create({
   card: { borderRadius: 16, padding: 14, gap: 6 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cardTitle: { flex: 1, fontSize: 17, fontWeight: '800' },
-  cardIcon: { fontSize: 14 },
+  visPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  visPillText: { fontSize: 12, fontWeight: '700' },
+  detailPhoto: { width: '100%', aspectRatio: 4 / 5, borderRadius: 16 },
+  cardPhoto: { width: '100%', aspectRatio: 16 / 9, borderRadius: 12, marginTop: 4 },
+  editButton: { borderWidth: 1.5, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   cardDate: { fontSize: 13 },
   cardStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 2 },
   cardStat: { fontSize: 13, fontWeight: '600' },

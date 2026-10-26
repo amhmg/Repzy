@@ -31,6 +31,7 @@ type WorkoutSessionValue = {
   dismissSaved: () => void;
   // Ticks off the next set without opening the workout (minimised bar and notification button)
   completeNextFromShortcut: () => Promise<void>;
+  markChanged: () => void; // a saved workout was edited: screens reload
   skipRestFromShortcut: () => Promise<void>;
 };
 
@@ -171,6 +172,7 @@ export function WorkoutSessionProvider({ userId, children }: { userId: string; c
     dismissSaved: () => setLastSaved(null),
     completeNextFromShortcut,
     skipRestFromShortcut,
+    markChanged: () => setSavedVersion((v) => v + 1),
   };
 
   return (

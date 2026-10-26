@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -188,6 +189,7 @@ export default function GroupDetail({ group, onClose, onLeft }: Props) {
             onInfo={setInfoFor}
             canDelete={openWorkout.user_id === myId}
             ownerLabel={openWorkout.user_id === myId ? 'You' : memberName(openWorkout)}
+            onEdited={load}
             onRepeatStarted={() => {
               setOpenWorkout(null);
               onClose();
@@ -403,6 +405,9 @@ function FeedCard({
           {extra}
         </Text>
       )}
+      {item.photo_url ? (
+        <Image source={{ uri: item.photo_url }} style={styles.feedPhoto} contentFit="cover" transition={150} />
+      ) : null}
     </Pressable>
   );
 }
@@ -472,6 +477,7 @@ const styles = StyleSheet.create({
   hint: { fontSize: 12, textAlign: 'center', marginTop: 4 },
   card: { borderRadius: 16, padding: 14, gap: 6 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  feedPhoto: { width: '100%', aspectRatio: 4 / 5, borderRadius: 12, marginTop: 6 },
   cardAuthor: { flex: 1, fontSize: 14, fontWeight: '800' },
   cardTime: { fontSize: 12 },
   cardTitle: { fontSize: 17, fontWeight: '800' },

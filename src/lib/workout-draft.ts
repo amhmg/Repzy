@@ -168,3 +168,54 @@ export function draftFromWorkout(workout: WorkoutForDraft, defaultRest: number):
     workout.exercises.map((e) => draftExercise(e.name, e.sets.length, e.rest_seconds ?? defaultRest)),
   );
 }
+
+export type WorkoutForEdit = {
+  title: string | null;
+  notes?: string | null;
+  visibility: DraftVisibility;
+  group_id?: string | null;
+  started_at: string | null;
+  created_at: string;
+  exercises: {
+    name: string;
+    rest_seconds: number | null;
+    notes?: string | null;
+    sets: { weight: number | null; reps: number; set_type?: string | null; rpe?: number | null }[];
+  }[];
+};
+
+const SET_TYPE_VALUES: SetType[] = ['normal', 'warmup', 'drop', 'failure', 'amrap', 'backoff'];
+
+// Editing a finished workout: every saved set comes back ticked, with its numbers
+export function draftForEdit(workout: WorkoutForEdit, defaultRest: number): WorkoutDraft {
+  return {
+    version: 1,
+    startedAt: workout.started_at ?? workout.created_at,
+    exercises: workout.exercises.map((e) => ({
+      id: newId(),
+      name: e.name,
+      gif: findLibraryExercise(e.name)?.gif ?? null,
+      restSeconds: e.rest_seconds ?? defaultRest,
+      exerciseNotes: e.notes ?? undefined,
+      sets: e.sets.map((s) => ({
+        id: newId(),
+        weight: s.weight != null ? String(s.weight) : '',
+        reps: String(s.reps),
+        done: true,
+        prTypes: [],
+        type: SET_TYPE_VALUES.includes(s.set_type as SetType) ? (s.set_type as SetType) : 'normal',
+        rpe: s.rpe ?? null,
+      })),
+      previous: [],
+      hasHistory: false, // no PR pop-ups while editing; records are recalculated on save
+      historicBest: {},
+      loading: false,
+    })),
+    rest: null,
+    title: workout.title ?? 'Workout',
+    visibility: workout.visibility,
+    groupId: workout.group_id ?? null,
+    notes: workout.notes ?? '',
+    updatedAt: new Date().toISOString(),
+  };
+}
